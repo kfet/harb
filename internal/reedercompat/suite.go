@@ -311,14 +311,16 @@ func Run(t *testing.T, newH NewHarness) {
 	})
 
 	t.Run("timestamp-encoding/stream-contents", func(t *testing.T) {
-		// v0.4.8/v0.4.9 wire-format lock — both units AND source:
-		//   - published/updated = entry Published, in seconds
-		//   - timestampUsec     = entry Published, in microseconds
+		// Wire-format lock — both units AND source:
+		//   - published/updated = entry Published, in seconds (display date)
+		//   - timestampUsec     = entry SYNC time = max(Published, FetchedAt), µs
 		//   - crawlTimeMsec     = entry FetchedAt, in milliseconds
-		// Published and FetchedAt are deliberately set to disjoint
-		// times so the test differentiates which field each wire slot
-		// reads from — not just that the units happen to be right.
-		// A regression that swaps the two sources will fail here.
+		// timestampUsec is the GReader stream cursor/sort key and MUST track
+		// arrival (fetch) time, not publish date, or incremental clients
+		// (Reeder) never see late-fetched, old-dated items (CBC/Penny Arcade
+		// backdate their items). published/updated stay the publish date so
+		// the displayed article date is unchanged. Published and FetchedAt are
+		// deliberately disjoint so a regression swapping the slots fails here.
 		h := newH(t)
 		// Two fixed, well-defined timestamps with no overlap. Use
 		// values that round-trip cleanly through seconds/ms/µs.
@@ -345,7 +347,13 @@ func Run(t *testing.T, newH NewHarness) {
 				t.Fatalf("compat timestamp-encoding: missing item for hash %q", hh)
 			}
 			wantPubSec := published[i].Unix()
-			wantPubUsec := strconv.FormatInt(published[i].UnixMicro(), 10)
+			// sync time = the later of publish/fetch; fetched is after
+			// published in this fixture, so timestampUsec must read fetch.
+			syncT := published[i]
+			if fetched[i].After(syncT) {
+				syncT = fetched[i]
+			}
+			wantSyncUsec := strconv.FormatInt(syncT.UnixMicro(), 10)
 			wantFetchMsec := strconv.FormatInt(fetched[i].UnixMilli(), 10)
 			if it.Published != wantPubSec {
 				t.Errorf("compat timestamp-encoding: item[%d].published=%d, want %d (Published, seconds)", i, it.Published, wantPubSec)
@@ -353,8 +361,8 @@ func Run(t *testing.T, newH NewHarness) {
 			if it.Updated != wantPubSec {
 				t.Errorf("compat timestamp-encoding: item[%d].updated=%d, want %d (Published, seconds)", i, it.Updated, wantPubSec)
 			}
-			if it.TimestampUsec != wantPubUsec {
-				t.Errorf("compat timestamp-encoding: item[%d].timestampUsec=%q, want %q (Published, microseconds)", i, it.TimestampUsec, wantPubUsec)
+			if it.TimestampUsec != wantSyncUsec {
+				t.Errorf("compat timestamp-encoding: item[%d].timestampUsec=%q, want %q (sync time = max(Published,FetchedAt), microseconds)", i, it.TimestampUsec, wantSyncUsec)
 			}
 			if it.CrawlTimeMsec != wantFetchMsec {
 				t.Errorf("compat timestamp-encoding: item[%d].crawlTimeMsec=%q, want %q (FetchedAt, milliseconds)", i, it.CrawlTimeMsec, wantFetchMsec)
@@ -478,6 +486,63 @@ func Run(t *testing.T, newH NewHarness) {
 			"&ot="+strconv.FormatInt(time.Now().Add(24*time.Hour).Unix(), 10), nil)
 		if !strings.Contains(future.Body.String(), `"itemRefs":[]`) {
 			t.Errorf("compat ot-nt-filters: empty result must encode itemRefs as [], body=%s", future.Body.String())
+		}
+	})
+
+	t.Run("backdated-item/visible-to-incremental", func(t *testing.T) {
+		// Regression (the CBC / Penny Arcade bug): an item published in the
+		// past but FETCHED now must sort and stamp by SYNC time =
+		// max(Published, FetchedAt). Many feeds backdate items to article
+		// time; if timestampUsec uses publish time it sits below an
+		// incremental client's cursor and the item is never delivered, even
+		// though it is genuinely new and unread.
+		h := newH(t)
+		now := time.Now().UTC().Truncate(time.Second)
+		// 0 = fresh (pub & fetched ~now-2min); 1 = backdated (pub 48h ago,
+		// fetched NOW — it arrived later than the fresh item).
+		published := []time.Time{now.Add(-2 * time.Minute), now.Add(-48 * time.Hour)}
+		fetched := []time.Time{now.Add(-2 * time.Minute), now}
+		_, hashes := h.SeedFeedTimes(t, "BD", "BD", published, fetched)
+		backdated := hashes[1]
+
+		// 1. Default reading-list order is newest-ARRIVAL first: backdated
+		//    (fetched now) sorts before fresh (fetched -2min).
+		w := Do(t, h, "GET", "/reader/api/0/stream/items/ids?s="+StreamReadingList+"&n=100", nil)
+		var resp itemsIDsResponseJSON
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if len(resp.ItemRefs) != 2 {
+			t.Fatalf("reading-list returned %d refs, want 2", len(resp.ItemRefs))
+		}
+		if resp.ItemRefs[0].ID != ItemLongID(backdated) {
+			t.Errorf("order: ref[0]=%q want backdated %q (latest-fetched must sort first)", resp.ItemRefs[0].ID, ItemLongID(backdated))
+		}
+		// 2. Backdated item's timestampUsec is its fetch time (~now), not its
+		//    publish time (48h ago).
+		var backTS string
+		for _, r := range resp.ItemRefs {
+			if r.ID == ItemLongID(backdated) {
+				backTS = r.TimestampUsec
+			}
+		}
+		wantTS := strconv.FormatInt(fetched[1].UnixMicro(), 10)
+		if backTS != wantTS {
+			t.Errorf("backdated timestampUsec=%q, want fetch-time %q (not publish time)", backTS, wantTS)
+		}
+		// 3. An incremental client whose cursor already advanced past the
+		//    fresh item (ot between fresh and backdated sync times) MUST still
+		//    receive the backdated item. Under the old publish-time contract
+		//    it was lost forever.
+		ot := now.Add(-time.Minute).Unix()
+		inc := Do(t, h, "GET", "/reader/api/0/stream/items/ids?s="+StreamReadingList+
+			"&ot="+strconv.FormatInt(ot, 10)+"&n=100", nil)
+		var incResp itemsIDsResponseJSON
+		if err := json.Unmarshal(inc.Body.Bytes(), &incResp); err != nil {
+			t.Fatalf("unmarshal inc: %v", err)
+		}
+		if len(incResp.ItemRefs) != 1 || incResp.ItemRefs[0].ID != ItemLongID(backdated) {
+			t.Errorf("incremental ot=%d returned %+v, want exactly the backdated item %q", ot, incResp.ItemRefs, ItemLongID(backdated))
 		}
 	})
 

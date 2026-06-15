@@ -529,7 +529,7 @@ func (s *Server) collectStream(streamID string) ([]store.Entry, error) {
 		gather(func(store.Feed) bool { return true })
 	}
 	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].Published.After(entries[j].Published)
+		return entrySyncLess(entries[j], entries[i])
 	})
 	return entries, nil
 }
@@ -592,11 +592,30 @@ func (s *Server) applyRequestFilters(es []store.Entry, r *http.Request, streamID
 	})
 }
 
+// entrySyncTime is the GReader stream cursor / sort key: the time the item
+// became visible to a syncing client (max of fetch and publish). Using fetch
+// time for backdated items keeps timestampUsec monotonic with arrival so
+// incremental clients (Reeder) see late-fetched, old-dated items as new.
 func entrySyncTime(e store.Entry) time.Time {
 	if e.FetchedAt.After(e.Published) {
 		return e.FetchedAt
 	}
 	return e.Published
+}
+
+// entrySyncLess orders entries for GReader streams: primary key is the sync
+// time (arrival), with Published then Hash as deterministic tiebreakers so
+// pagination offsets stay stable when many items share one poll-cycle fetch
+// time. Newest-first callers pass arguments reversed.
+func entrySyncLess(a, b store.Entry) bool {
+	sa, sb := entrySyncTime(a), entrySyncTime(b)
+	if !sa.Equal(sb) {
+		return sa.Before(sb)
+	}
+	if !a.Published.Equal(b.Published) {
+		return a.Published.Before(b.Published)
+	}
+	return a.Hash < b.Hash
 }
 
 func entryDisplayTime(e store.Entry) time.Time {
@@ -643,7 +662,7 @@ func (s *Server) sortForRequest(es []store.Entry, r *http.Request) {
 		return
 	}
 	sort.Slice(es, func(i, j int) bool {
-		return es[i].Published.Before(es[j].Published)
+		return entrySyncLess(es[i], es[j])
 	})
 }
 
@@ -743,7 +762,7 @@ func (s *Server) toStreamItems(es []store.Entry, op *store.OPML) []streamItem {
 			Published:     ts,
 			Updated:       ts,
 			CrawlTimeMsec: strconv.FormatInt(e.FetchedAt.UnixMilli(), 10),
-			TimestampUsec: strconv.FormatInt(displayTime.UnixMicro(), 10),
+			TimestampUsec: strconv.FormatInt(entrySyncTime(e).UnixMicro(), 10),
 			Author:        e.Author,
 			Alternate:     []streamLink{{HREF: e.Link, Type: "text/html"}},
 			Summary:       streamContent{Content: body},
@@ -831,7 +850,7 @@ func (s *Server) handleItemsIDs(w http.ResponseWriter, r *http.Request) {
 			ID:            longID,
 			LongID:        longID,
 			DirectStreams: directStreams[e.FeedHash],
-			TimestampUsec: strconv.FormatInt(entryDisplayTime(e).UnixMicro(), 10),
+			TimestampUsec: strconv.FormatInt(entrySyncTime(e).UnixMicro(), 10),
 		})
 	}
 	writeJSON(w, out)
@@ -896,7 +915,7 @@ func (s *Server) handleMarkAllRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, e := range entries {
-		if !cutoff.IsZero() && e.Published.After(cutoff) {
+		if !cutoff.IsZero() && entrySyncTime(e).After(cutoff) {
 			continue
 		}
 		if err := s.Store.SetRead(e.Hash, true); err != nil {

@@ -4,7 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-06-15
+
 ### Fixed
+
+- **Backdated feed items were invisible to incremental sync clients
+  (Reeder).** The Google Reader `timestampUsec` — the stream cursor and
+  sort key clients use to discover new items — was derived from each
+  item's *publish* date. Feeds that backdate items to article time (CBC,
+  Penny Arcade, …) therefore received a cursor value in the past, so once
+  a client's incremental cursor had advanced beyond it the item was never
+  delivered: it stayed unread in the web UI but never appeared in the
+  reader. `timestampUsec`, the reading-list sort order, and the
+  `mark-all-read` cutoff now use the item's *sync time* (the later of
+  publish and fetch), so a late-fetched, old-dated entry arrives as new.
+  The displayed article date (`published`/`updated`) and `crawlTimeMsec`
+  are unchanged. Stream ordering also gained deterministic
+  `published`-then-hash tiebreakers so pagination offsets stay stable when
+  many items share a single poll-cycle fetch time.
 
 - **Docs corrected to the `harb` name.** `README.md`, `AGENTS.md`, and the
   bundled `THIRD_PARTY.md` still referenced the pre-rename `harborrs`
