@@ -526,6 +526,12 @@ ul.entries {
   border-left: 3px solid var(--accent);
   padding-left: calc(0.6em - 3px);
 }
+/* Synthetic "returning" feed row: shown only because the user navigated
+   back into the home master-detail from a feed that's now empty (0 unread
+   under the unread-only filter) and so has no real row. Dimmed + italic so
+   it reads as "not really in the list" — but it still takes the kb-focus
+   highlight above when selected. */
+.feeds li.returning { opacity: 0.65; font-style: italic; }
 .entry .feed-tag {
   color: var(--muted);
   font-size: 0.78em;

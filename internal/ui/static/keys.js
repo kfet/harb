@@ -125,6 +125,33 @@
     return false;
   };
 
+  // ---- capture "return feed" on the feed entries page --------------
+  // On a per-feed entries page (Scope=="feed") the manage panel carries
+  // input#feed-url whose value IS the feed URL (== ScopeID == the home
+  // row's ?id). Remember it (with the feed title from the h1's text and
+  // a timestamp) so that when the user backs out to the home master-
+  // detail we can restore selection to THIS feed instead of auto-
+  // selecting the first one. Updated on every feed visit (desirable).
+  // input#feed-url is only emitted for feed scope, so /ui/all and
+  // /ui/starred never set it. Storage is wrapped (private mode throws).
+  (function captureReturnFeed() {
+    const inp = $("#feed-url");
+    if (!inp || !inp.value) return;
+    const id = inp.value;
+    let title = "";
+    const h1 = $("h1");
+    if (h1) {
+      h1.childNodes.forEach((n) => { if (n.nodeType === 3) title += n.textContent; });
+      title = title.trim();
+    }
+    try {
+      sessionStorage.setItem(
+        "harb.returnFeed",
+        JSON.stringify({ id: id, title: title, ts: Date.now() })
+      );
+    } catch (_) { /* private mode — best effort */ }
+  })();
+
   // ---- global: ? help overlay --------------------------------------
   const help = $("#kbd-help");
   const backdrop = $("#kbd-backdrop");
@@ -468,6 +495,67 @@
       if (rows().length === 0) return;
       focusRow(0);
     };
+    // Restore selection to the feed we just backed out of (home master-
+    // detail only). Preferred over autoSelectFirst when sessionStorage
+    // carries a fresh "harb.returnFeed" (set on the feed page). Returns
+    // true when it took selection, so the caller skips autoSelectFirst.
+    //
+    //   row present  → focusRow on it (kb-focus + entries into #feed-pane).
+    //   row absent + fresh (≤5 min) → the feed is now empty (0 unread
+    //     under the unread-only filter) so the server omitted its row.
+    //     Inject a synthetic, dimmed li.returning carrying the feed link
+    //     + a 0 count and select THAT: focusRow previews the feed's
+    //     (all-caught-up) entries into #feed-pane, and Right/Enter on it
+    //     re-enters the feed. rows() includes it (non-.empty li).
+    //   row absent + stale → fall through (the feed may be gone).
+    //
+    // We keep returnFeed after a synthetic restore so repeated home
+    // visits keep the selection (cleaner than a one-shot vanish); the
+    // 5-minute recency window still guards against phantom rows for
+    // feeds deleted long ago.
+    const RETURN_FRESH_MS = 5 * 60 * 1000;
+    const rowFeedId = function (li) {
+      const a = li.querySelector("a");
+      if (!a) return null;
+      try { return new URL(a.href, window.location.href).searchParams.get("id"); }
+      catch (_) { return null; }
+    };
+    const restoreReturnFeed = function () {
+      if (isEntryList || !wideScreen() || idx >= 0) return false;
+      if (!document.querySelector("#feed-pane")) return false;
+      let rf;
+      try {
+        const raw = sessionStorage.getItem("harb.returnFeed");
+        if (!raw) return false;
+        rf = JSON.parse(raw);
+      } catch (_) { return false; }
+      if (!rf || !rf.id) return false;
+      const all = rows();
+      for (let i = 0; i < all.length; i++) {
+        if (rowFeedId(all[i]) === rf.id) { focusRow(i); return true; }
+      }
+      // Not in the list — only synthesise a row for a recent visit.
+      if (!rf.ts || (Date.now() - rf.ts) > RETURN_FRESH_MS) return false;
+      if (!feedLists.length) return false;
+      const ul = feedLists[0];
+      const li = document.createElement("li");
+      li.className = "returning";
+      const a = document.createElement("a");
+      a.setAttribute("href", "feed?id=" + encodeURIComponent(rf.id));
+      a.textContent = rf.title || rf.id;
+      li.appendChild(a);
+      li.appendChild(document.createTextNode(" "));
+      const span = document.createElement("span");
+      span.className = "count";
+      span.textContent = "0";
+      li.appendChild(span);
+      ul.appendChild(li);
+      const after = rows();
+      const j = after.indexOf(li);
+      if (j < 0) { li.remove(); return false; }
+      focusRow(j);
+      return true;
+    };
     // Mouse/tap click on a row → treat it as the new keyboard focus, so
     // subsequent j/k navigation continues from the clicked row. Event
     // delegation on the list lets the row's icon-buttons keep their own
@@ -584,8 +672,11 @@
 
     // Initial fallback selection — runs once after wiring, after any
     // synchronous reapplyFocus from load-time swaps. The idx<0 guard
-    // inside means a restored selection is preferred.
-    autoSelectFirst();
+    // inside means a restored selection is preferred. On the home
+    // master-detail we first try to restore the feed we just backed out
+    // of (restoreReturnFeed); only if that doesn't take do we auto-
+    // select the first feed.
+    if (!restoreReturnFeed()) autoSelectFirst();
   }
 
   // ---- entry view --------------------------------------------------

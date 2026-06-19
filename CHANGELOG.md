@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-06-19
+
+### Fixed
+
+- **Keyboard "back" (← / u) from a feed now restores that feed's
+  selection on the home master-detail.** Backing out of a feed reloads
+  the home page from scratch (bfcache force-reload), which previously
+  auto-selected the *first* feed — losing your place. The feed you were
+  reading is now re-selected and previewed in the right-hand pane. If
+  that feed is now empty (0 unread under the unread-only filter) the
+  server omits its row entirely; in that case a dimmed, synthetic
+  "returning" row is shown selected with an empty (all-caught-up)
+  preview, and Right/Enter re-enters the feed. Pure client-side change
+  (`keys.js`), gated to wide screens; stale (>5 min) returns fall back to
+  the old first-feed behaviour. (Issue: home back-nav loses feed.)
+
+
 ## [0.13.0] - 2026-06-15
 
 ### Fixed
