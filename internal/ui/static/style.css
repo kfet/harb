@@ -368,6 +368,13 @@ ul.feeds li.empty {
   border-radius: 10px;
 }
 
+/* Inline count value (page total, scope pill) — same id-targetable
+   element as .count badges for OOB swaps, but without the badge chrome
+   so it reads as plain text inside surrounding copy. */
+.count-inline {
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---- sync-failure surfacing --------------------------------------- */
 .sync-fail {
   border: 1px solid var(--danger);

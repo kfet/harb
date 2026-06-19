@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-06-19
+
+### Fixed
+
+- **Web UI entry read/star state no longer desyncs across the page.**
+  Read/starred state is shown in up to four places (list row, article
+  detail pane, the home count badges, the scope pill) and previously
+  each mutation hand-patched an ad-hoc subset, so the numbers and the
+  two representations drifted until a full reload. Concretely: toggling
+  a list row didn't update the open article; toggling the read circle
+  never updated any of the home count badges; and detail→row sync was
+  partial. The UI is now **server-authoritative**: every state-mutation
+  endpoint returns the COMPLETE set of affected fragments as id-targeted
+  `hx-swap-oob` swaps carrying absolute, recomputed values — the list
+  row, the detail article, and (for read changes) every affected count
+  badge (`count-feed`, `count-scope`, per-tag `count-grouphead` /
+  `count-side`, `count-side-all`, `count-total`). The client does zero
+  state math; htmx silently drops swaps whose target id isn't in the
+  current layout. The dwell auto-mark-read and the home master-detail
+  "mark feed read" (`r`) paths now apply the same server fragments
+  instead of patching counts client-side, and the bespoke
+  `decAncestorCounts` / `patchReadBtn` JS is gone. UI-only change;
+  `internal/reader` (Google Reader API) is untouched.
+
+  Known limitation: on a tag-filtered home page (`?tag=…`) the page
+  total badge first renders the scoped total, while an in-pane toggle
+  emits the global total — a cosmetic edge that self-heals on the next
+  navigation. The home master-detail is normally unfiltered.
+
 ## [0.14.0] - 2026-06-19
 
 ### Fixed

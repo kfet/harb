@@ -1,8 +1,11 @@
 {{define "home"}}{{template "base" .}}{{end}}
 {{define "title"}}feeds — Harbour RSS{{end}}
 {{define "content"}}
+{{/* OOB count-badge id scheme (see writeEntryStateOOB in ui.go):
+     count-feed-<feedHash>  count-grouphead-<tagSlug>  count-side-<slug>
+     count-side-all  count-side-untagged  count-total  count-scope */}}
 <section class="home">
-<h1>feeds <small>({{.Total}} unread)</small></h1>
+<h1>feeds <small>(<span id="count-total" class="count-inline">{{.Total}}</span> unread)</small></h1>
 
 <div class="home-actions">
 <a href="feed/new" class="addlink">+ add feed</a>
@@ -25,7 +28,7 @@
 <ul class="taglist">
 {{range .Sidebar}}
 <li class="pinned{{if and (eq $.TagFilter "") (eq .Name "")}} active{{else if eq $.TagFilter .Name}} active{{end}}">
-<a href="./{{if .Name}}?tag={{.Name}}{{end}}">{{.Label}} <span class="count">{{.Unread}}</span></a>
+<a href="./{{if .Name}}?tag={{.Name}}{{end}}">{{.Label}} <span id="count-side-{{.Slug}}" class="count">{{.Unread}}</span></a>
 </li>
 {{end}}
 </ul>
@@ -36,13 +39,13 @@
 {{if .Groups}}
 {{range .Groups}}
 <section class="feed-group" data-tag="{{.Name}}">
-<h2 class="feed-group-head"><button type="button" class="feed-group-toggle" aria-expanded="true" aria-controls="grp-{{.Slug}}"><span class="caret" aria-hidden="true">▾</span> {{.Label}}</button> <span class="count">{{.Unread}}</span></h2>
+<h2 class="feed-group-head"><button type="button" class="feed-group-toggle" aria-expanded="true" aria-controls="grp-{{.Slug}}"><span class="caret" aria-hidden="true">▾</span> {{.Label}}</button> <span id="count-grouphead-{{.Slug}}" class="count">{{.Unread}}</span></h2>
 <ul class="feeds" id="grp-{{.Slug}}">
 {{range .Feeds}}
 <li{{if .Failing}} class="feed-failing"{{end}}>
 <a href="feed?id={{.URL}}">{{.Title}}</a>
 {{if .Failing}}<span class="sync-warn" title="sync failing — {{.ErrorCount}} consecutive error{{if ne .ErrorCount 1}}s{{end}}; last succeeded {{.LastSuccessFmt}}{{with .LastError}} — {{.}}{{end}}" aria-label="sync failing">⚠</span>{{end}}
-<span class="count">{{.Unread}}</span>
+<span id="count-feed-{{.Hash}}" class="count">{{.Unread}}</span>
 </li>
 {{end}}
 </ul>

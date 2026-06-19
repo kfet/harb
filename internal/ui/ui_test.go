@@ -804,7 +804,7 @@ func TestHomeWithEntries(t *testing.T) {
 	es, _ := st.ListEntries(store.FeedHash(u))
 	st.SetRead(es[0].Hash, true) // 1 read, 2 unread
 	w := do(mux, req("GET", "/ui/", tok, nil))
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "2 unread") {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `id="count-total" class="count-inline">2</span> unread`) {
 		t.Fatalf("home: %d %s", w.Code, w.Body.String())
 	}
 }
@@ -1931,13 +1931,13 @@ func TestHomeBadgesAreScopeAware(t *testing.T) {
 	}
 	// Default view: 2 unread total.
 	w := do(mux, req("GET", "/ui/", tok, nil))
-	if !strings.Contains(w.Body.String(), "(2 unread)") {
+	if !strings.Contains(w.Body.String(), `id="count-total" class="count-inline">2</span> unread`) {
 		t.Fatalf("global total wrong: %s", w.Body.String())
 	}
 	// Filter to ?tag=tech: only A is in scope → 1 unread.
 	w = do(mux, req("GET", "/ui/?tag=tech", tok, nil))
 	body := w.Body.String()
-	if !strings.Contains(body, "(1 unread)") {
+	if !strings.Contains(body, `id="count-total" class="count-inline">1</span> unread`) {
 		t.Fatalf("scoped total wrong: %s", body)
 	}
 	if !strings.Contains(body, "unread only (1)") {

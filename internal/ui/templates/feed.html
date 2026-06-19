@@ -7,7 +7,7 @@
 <h1>{{.Heading}}{{if .ShowMarkAll}} <form method="POST" action="mark-all-read?scope={{.Scope}}{{if .ScopeID}}&id={{.ScopeID}}{{end}}" class="markall-form"><button type="submit" class="markall">mark all read</button></form>{{end}}</h1>
 {{if eq .Scope "feed"}}
 <div class="home-actions">
-{{if .UnreadOnly}}<a href="feed?id={{.ScopeID}}&unread=0" class="filter active">unread only ({{.UnreadCount}}) ×</a>{{else}}<a href="feed?id={{.ScopeID}}&unread=1" class="filter">show unread only ({{.UnreadCount}})</a>{{end}}
+{{if .UnreadOnly}}<a href="feed?id={{.ScopeID}}&unread=0" class="filter active">unread only (<span id="count-scope" class="count-inline">{{.UnreadCount}}</span>) ×</a>{{else}}<a href="feed?id={{.ScopeID}}&unread=1" class="filter">show unread only (<span id="count-scope" class="count-inline">{{.UnreadCount}}</span>)</a>{{end}}
 </div>
 <details class="feed-manage">
 <summary class="feed-manage-summary"><span class="feed-manage-gear" aria-hidden="true">⚙</span> manage feed</summary>
@@ -50,13 +50,18 @@
 
 {{define "entryrow"}}
 <li id="entry-{{.Hash}}"{{if .OOB}} hx-swap-oob="true"{{end}} class="entry {{if .Read}}read{{else}}unread{{end}}{{if .Starred}} starred{{end}}">
-<button class="readbtn icon" aria-label="{{if .Read}}mark unread{{else}}mark read{{end}}" title="{{if .Read}}mark unread{{else}}mark read{{end}}" hx-post="entry/read?id={{.Hash}}&state={{if .Read}}0{{else}}1{{end}}" hx-target="#entry-{{.Hash}}" hx-swap="outerHTML"><span aria-hidden="true">{{if .Read}}○{{else}}●{{end}}</span></button>
+<button class="readbtn icon" aria-label="{{if .Read}}mark unread{{else}}mark read{{end}}" title="{{if .Read}}mark unread{{else}}mark read{{end}}" hx-post="entry/read?id={{.Hash}}&state={{if .Read}}0{{else}}1{{end}}" hx-swap="none"><span aria-hidden="true">{{if .Read}}○{{else}}●{{end}}</span></button>
 <a href="entry?id={{.Hash}}" class="entry-link">{{.Title}}</a>
 {{if .FeedTitle}}<small class="feed-tag">{{.FeedTitle}}</small>{{end}}
 {{if .PublishedFmt}}<time class="date" datetime="{{.Published.Format "2006-01-02T15:04:05Z07:00"}}" title="{{.Published.Format "2006-01-02 15:04 MST"}}">{{.PublishedFmt}}</time>{{end}}
-<button class="starbtn icon" aria-label="{{if .Starred}}unstar{{else}}star{{end}}" title="{{if .Starred}}unstar{{else}}star{{end}}" hx-post="entry/star?id={{.Hash}}&state={{if .Starred}}0{{else}}1{{end}}" hx-target="#entry-{{.Hash}}" hx-swap="outerHTML"><span aria-hidden="true">{{if .Starred}}★{{else}}☆{{end}}</span></button>
+<button class="starbtn icon" aria-label="{{if .Starred}}unstar{{else}}star{{end}}" title="{{if .Starred}}unstar{{else}}star{{end}}" hx-post="entry/star?id={{.Hash}}&state={{if .Starred}}0{{else}}1{{end}}" hx-swap="none"><span aria-hidden="true">{{if .Starred}}★{{else}}☆{{end}}</span></button>
 </li>
 {{end}}
+
+{{/* countoob — a single count badge as an hx-swap-oob swap, emitted by
+     writeEntryStateOOB. Class matches the first-render markup ("count"
+     for badges, "count-inline" for the page total / scope pill). */}}
+{{define "countoob"}}<span id="{{.ID}}" class="{{.Class}}" hx-swap-oob="true">{{.N}}</span>{{end}}
 
 {{define "tagchips"}}
 <div class="tagchips">

@@ -406,6 +406,7 @@ func tagSlug(name string) string {
 type homeFeed struct {
 	Title  string
 	URL    string
+	Hash   string // store.FeedHash(URL); stable DOM-id suffix for count-feed-<hash>
 	Unread int
 	Tags   []string
 
@@ -440,6 +441,7 @@ type feedGroup struct {
 type tagCount struct {
 	Name   string // tag name, or "" for "All", or store.ReservedTagUntagged for the no-tags bucket
 	Label  string // display label
+	Slug   string // stable DOM-id slug: "all" / "untagged" (count-side-<slug>)
 	Unread int
 }
 
@@ -553,7 +555,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		if unreadOnly && count == 0 {
 			continue
 		}
-		hf := homeFeed{Title: f.Title, URL: f.XMLURL, Unread: count, Tags: f.Tags}
+		hf := homeFeed{Title: f.Title, URL: f.XMLURL, Hash: store.FeedHash(f.XMLURL), Unread: count, Tags: f.Tags}
 		if failingNow {
 			hf.Failing = true
 			hf.ErrorCount = fs.ErrorCount
@@ -563,8 +565,8 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 		feeds = append(feeds, hf)
 	}
 	pinned := []tagCount{
-		{Name: "", Label: "All", Unread: buckets[""]},
-		{Name: store.ReservedTagUntagged, Label: "Untagged", Unread: buckets[store.ReservedTagUntagged]},
+		{Name: "", Label: "All", Slug: "all", Unread: buckets[""]},
+		{Name: store.ReservedTagUntagged, Label: "Untagged", Slug: "untagged", Unread: buckets[store.ReservedTagUntagged]},
 	}
 	groups := buildFeedGroups(feeds, tagFilter)
 	data := struct {
@@ -1006,6 +1008,19 @@ func (s *Server) handleMarkAllRead(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// oob=1 (home master-detail "r" key): the caller marks the
+		// feed read in place and wants the affected count badges back
+		// as OOB swaps instead of a navigation, so the home page's
+		// feed/group/sidebar/total counts stay consistent without a
+		// reload. The pane's entry rows are refreshed by the caller.
+		if r.URL.Query().Get("oob") == "1" {
+			if f := op.Find(u); f != nil {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.Header().Set("Cache-Control", "no-store")
+				s.writeCountsOOB(w, op, *f)
+			}
+			return
+		}
 		// Land back on the feed and let the user's persisted
 		// "unread only" choice (or the default) decide the view.
 		RelRedirect(w, r, "./", http.StatusSeeOther)
@@ -1094,6 +1109,22 @@ func entryBody(e store.Entry) template.HTML {
 	return template.HTML(sanitizeHTML(body))
 }
 
+// entryDetailData is the render input for the entry-detail fragment,
+// shared by the full entry page, the panel=1 split-view render, and the
+// OOB patch emitted by writeEntryStateOOB. OOB marks the article with
+// hx-swap-oob="true" so a toggle response can patch an open detail pane
+// in place; htmx silently drops it when #entry-detail-<hash> is absent.
+type entryDetailData struct {
+	Entry      store.Entry
+	Body       template.HTML
+	Title      string
+	SourceLink template.URL
+	State      store.EntryState
+	FeedURL    string
+	FeedTitle  string
+	OOB        bool
+}
+
 func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 	hash := r.URL.Query().Get("id")
 	if hash == "" {
@@ -1110,36 +1141,24 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	body := entryBody(e)
+	dd := entryDetailData{
+		Entry: e, Body: entryBody(e), Title: entryTitle(e),
+		SourceLink: LinkURL(e.Link), State: s.Store.EntryState(e.Hash),
+		FeedURL: f.XMLURL, FeedTitle: f.Title,
+	}
 	// panel=1 — render just the entry-detail fragment, no chrome.
 	// Used by the split-panel layout (keys.js openEntry issues an
 	// htmx.ajax GET with panel=1) so the right pane swaps in the entry
 	// view without a full page load.
 	if r.URL.Query().Get("panel") == "1" {
-		data := struct {
-			Entry      store.Entry
-			Body       template.HTML
-			Title      string
-			SourceLink template.URL
-			State      store.EntryState
-			FeedURL    string
-			FeedTitle  string
-		}{e, body, entryTitle(e), LinkURL(e.Link), s.Store.EntryState(e.Hash), f.XMLURL, f.Title}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = s.pages["entry"].ExecuteTemplate(w, "entry-detail", data)
+		_ = s.pages["entry"].ExecuteTemplate(w, "entry-detail", dd)
 		return
 	}
-	data := struct {
+	s.render(w, "entry", struct {
 		baseData
-		Entry      store.Entry
-		Body       template.HTML
-		Title      string
-		SourceLink template.URL
-		State      store.EntryState
-		FeedURL    string
-		FeedTitle  string
-	}{s.base(r), e, body, entryTitle(e), LinkURL(e.Link), s.Store.EntryState(e.Hash), f.XMLURL, f.Title}
-	s.render(w, "entry", data)
+		entryDetailData
+	}{s.base(r), dd})
 }
 
 func (s *Server) handleSetRead(w http.ResponseWriter, r *http.Request) {
@@ -1147,6 +1166,86 @@ func (s *Server) handleSetRead(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) handleSetStarred(w http.ResponseWriter, r *http.Request) {
 	s.toggleFlag(w, r, false)
+}
+
+// countOOB is one count badge rendered standalone as an hx-swap-oob
+// swap (template "countoob"). Class is "count" for the badge spots
+// (feed row / group header / sidebar) and "count-inline" for the
+// page total + scope pill, matching the first-render markup so the
+// OOB swap targets and restyles identically.
+type countOOB struct {
+	ID    string
+	N     int
+	Class string
+}
+
+// writeEntryStateOOB emits the COMPLETE set of fragments affected by a
+// single entry's read/star mutation, every one as an hx-swap-oob swap
+// carrying freshly-recomputed ABSOLUTE values. The client does zero
+// state math: it applies whatever fragments are present in its current
+// layout and htmx silently drops the rest (absent target id → no-op).
+// This is the single source of truth for the UI after a mutation.
+//
+// Emitted (all OOB):
+//  1. the list row            (#entry-<hash>)
+//  2. the detail article      (#entry-detail-<hash>) — always; dropped if absent
+//  3. on READ changes only, every affected count badge with an absolute
+//     value: the feed's count-feed + count-scope, each of the feed's
+//     tags' count-grouphead + count-side (or the untagged pair when the
+//     feed carries no tags), count-side-all and count-total.
+//
+// Star toggles leave unread counts unchanged, so the count badges are
+// skipped for them to keep the payload tight.
+func (s *Server) writeEntryStateOOB(w io.Writer, op *store.OPML, e store.Entry, f store.Feed, st store.EntryState, isRead bool) {
+	// 1. list row.
+	row := rowFor(e, st)
+	row.OOB = true
+	_ = s.pages["feed"].ExecuteTemplate(w, "entryrow", row)
+	// 2. detail article (always emitted; htmx drops it when absent).
+	dd := entryDetailData{
+		Entry: e, Body: entryBody(e), Title: entryTitle(e),
+		SourceLink: LinkURL(e.Link), State: st,
+		FeedURL: f.XMLURL, FeedTitle: f.Title, OOB: true,
+	}
+	_ = s.pages["entry"].ExecuteTemplate(w, "entry-detail", dd)
+	// 3. count badges — only read toggles move unread counts.
+	if !isRead {
+		return
+	}
+	s.writeCountsOOB(w, op, f)
+}
+
+// writeCountsOOB emits the OOB count-badge set affected by a change to
+// feed f's unread total: the feed's own count-feed + count-scope, each
+// of its tags' count-grouphead + count-side (or the untagged pair when
+// it carries no tags), count-side-all and count-total. Values are
+// absolute, recomputed from the store. Shared by the single-entry
+// toggle (writeEntryStateOOB) and the whole-feed mark-all-read path.
+func (s *Server) writeCountsOOB(w io.Writer, op *store.OPML, f store.Feed) {
+	perFeed, buckets := s.unreadCounts(op)
+	emit := func(id, class string, n int) {
+		_ = s.pages["feed"].ExecuteTemplate(w, "countoob", countOOB{ID: id, N: n, Class: class})
+	}
+	emit("count-feed-"+store.FeedHash(f.XMLURL), "count", perFeed[f.XMLURL])
+	emit("count-scope", "count-inline", perFeed[f.XMLURL])
+	if len(f.Tags) == 0 {
+		emit("count-grouphead-untagged", "count", buckets[store.ReservedTagUntagged])
+		emit("count-side-untagged", "count", buckets[store.ReservedTagUntagged])
+	} else {
+		for _, t := range f.Tags {
+			slug := tagSlug(t)
+			emit("count-grouphead-"+slug, "count", buckets[t])
+			emit("count-side-"+slug, "count", buckets[t])
+		}
+	}
+	emit("count-side-all", "count", buckets[""])
+	// count-total is always the GLOBAL unread total. On a tag-filtered
+	// home (?tag=…) the first render shows the scoped total instead, so
+	// an in-pane toggle there overwrites it with the global value — a
+	// cosmetic edge that self-heals on the next navigation. The home
+	// master-detail is normally unfiltered; we don't plumb filter scope
+	// through the toggle endpoint for this.
+	emit("count-total", "count-inline", buckets[""])
 }
 
 func (s *Server) toggleFlag(w http.ResponseWriter, r *http.Request, isRead bool) {
@@ -1171,7 +1270,6 @@ func (s *Server) toggleFlag(w http.ResponseWriter, r *http.Request, isRead bool)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// Find the entry to re-render its row (or full detail).
 	op, err := s.OPML.Load()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1185,28 +1283,10 @@ func (s *Server) toggleFlag(w http.ResponseWriter, r *http.Request, isRead bool)
 	st := s.Store.EntryState(hash)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	if r.URL.Query().Get("view") == "detail" {
-		data := struct {
-			Entry      store.Entry
-			Body       template.HTML
-			Title      string
-			SourceLink template.URL
-			State      store.EntryState
-			FeedURL    string
-			FeedTitle  string
-		}{e, entryBody(e), entryTitle(e), LinkURL(e.Link), st, f.XMLURL, f.Title}
-		_ = s.pages["entry"].ExecuteTemplate(w, "entry-detail", data)
-		// Out-of-band patch for the matching list row, so the
-		// split-panel keeps the list and the open entry in sync when
-		// the user toggles read/star from inside the right pane. On
-		// the standalone /ui/entry page the row simply isn't in the
-		// DOM and htmx silently drops the OOB fragment.
-		oob := rowFor(e, st)
-		oob.OOB = true
-		_ = s.pages["feed"].ExecuteTemplate(w, "entryrow", oob)
-		return
-	}
-	_ = s.pages["feed"].ExecuteTemplate(w, "entryrow", rowFor(e, st))
+	// Always emit the unified OOB set — row, detail, and (for read
+	// changes) every affected count badge. The client applies whatever
+	// is present in its layout; htmx drops the rest. No view= branching.
+	s.writeEntryStateOOB(w, op, e, f, st, isRead)
 }
 
 // handleSettings renders the settings page (GET /ui/settings). Refuses

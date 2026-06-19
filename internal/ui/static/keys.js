@@ -117,6 +117,19 @@
   // (no leading slash).
   const uiURL = (seg) => BASE + seg;
 
+  // applyOOB processes a server response made up solely of
+  // hx-swap-oob fragments (the unified row + detail article + count
+  // badges emitted by writeEntryStateOOB / writeCountsOOB) with NO
+  // primary swap, so each fragment lands wherever its target id exists
+  // in the current layout and htmx silently drops the rest. This is how
+  // a fetch()-driven path (dwell auto-read, mark-feed-read) shares the
+  // exact same server-authoritative state update as a direct htmx POST.
+  // No-op without htmx.
+  const applyOOB = (html) => {
+    if (!html || !window.htmx) return;
+    try { window.htmx.swap(document.body, html, { swapStyle: "none" }); } catch (_) { /* */ }
+  };
+
   const inEditable = (e) => {
     const t = e.target;
     if (!t) return false;
@@ -386,42 +399,12 @@
       }, 140);
     };
     // Mark every entry of the keyboard-selected feed read (home master-
-    // detail only). We POST the existing feed-scope mark-all-read
-    // endpoint directly — not via the .markall click interceptor — then
-    // zero the row's unread count and refresh the preview pane in place,
-    // so focus and scroll are preserved. Returns true when it acted.
-    // Subtract `n` from the bare-integer .count badge in `el` (tag group
-    // header / sidebar / feed row), clamped at zero.
-    const decCount = (el, n) => {
-      if (!el) return;
-      const v = Math.max(0, (parseInt(el.textContent, 10) || 0) - n);
-      el.textContent = String(v);
-    };
-    // After a feed row is marked read in place, draw down the aggregate
-    // unread counters that included it: its tag group header, the
-    // matching sidebar tag entry, the always-present sidebar "all"
-    // entry, and the "(N unread)" page total. Keeps the home page
-    // consistent without a reload.
-    const decAncestorCounts = (row, n) => {
-      const section = row.closest(".feed-group");
-      const tag = section ? (section.getAttribute("data-tag") || "") : "";
-      if (section) decCount(section.querySelector(".feed-group-head .count"), n);
-      document.querySelectorAll(".taglist li").forEach((li) => {
-        const a = li.querySelector("a");
-        if (!a) return;
-        const href = a.getAttribute("href") || "";
-        const qi = href.indexOf("?tag=");
-        const liTag = qi >= 0 ? decodeURIComponent(href.slice(qi + 5)) : "";
-        // liTag === "" is the "all" entry (href "./") — always affected.
-        if (liTag === "" || liTag === tag) decCount(li.querySelector(".count"), n);
-      });
-      const tot = document.querySelector("h1 small");
-      if (tot) {
-        const cur = (tot.textContent.match(/\d+/) || ["0"])[0];
-        const v = Math.max(0, (parseInt(cur, 10) || 0) - n);
-        tot.textContent = "(" + v + " unread)";
-      }
-    };
+    // detail only). We POST the feed-scope mark-all-read endpoint with
+    // oob=1, apply the returned OOB count badges (feed→0 plus the
+    // recomputed group-head / sidebar / all / total), then refresh the
+    // preview pane in place so focus and scroll are preserved. The
+    // server is the single source of truth for every count — no client
+    // arithmetic. Returns true when it acted.
     const markSelectedFeedRead = () => {
       if (isEntryList || !wideScreen() || idx < 0) return false;
       const row = rows()[idx];
@@ -431,18 +414,13 @@
       let id;
       try { id = new URL(a.href).searchParams.get("id"); } catch (_) { return false; }
       if (!id) return false;
-      fetch(uiURL("mark-all-read?scope=feed&id=" + encodeURIComponent(id)), {
+      fetch(uiURL("mark-all-read?scope=feed&oob=1&id=" + encodeURIComponent(id)), {
         method: "POST", credentials: "same-origin",
       }).then(function (resp) {
-        if (!resp.ok) return;
-        const c = row.querySelector(".count");
-        const prev = c ? (parseInt(c.textContent, 10) || 0) : 0;
-        if (c) c.textContent = "0";
-        // Marking the feed read in place must also draw down every
-        // aggregate counter that included it — the tag group header, the
-        // matching sidebar tag entry, the sidebar "all" entry, and the
-        // page total — otherwise those stay stale until a full reload.
-        if (prev > 0) decAncestorCounts(row, prev);
+        if (!resp.ok) return null;
+        return resp.text();
+      }).then(function (html) {
+        applyOOB(html);
         const href = a.getAttribute("href");
         const sep = href.indexOf("?") >= 0 ? "&" : "?";
         try { htmx.ajax("GET", href + sep + "panel=1", "#feed-pane"); } catch (_) { /* */ }
@@ -681,22 +659,6 @@
 
   // ---- entry view --------------------------------------------------
   //
-  // patchReadBtn updates a read-toggle button in place: the glyph
-  // (●/○), the tooltip + aria-label, and the hx-post URL's state=
-  // parameter so the next click toggles the correct direction. htmx
-  // re-reads hx-post lazily on each event, so mutating the attribute
-  // is enough.
-  const patchReadBtn = function (btn, isRead) {
-    if (!btn) return;
-    btn.textContent = isRead ? "○" : "●";
-    btn.title = isRead ? "mark unread" : "mark read";
-    btn.setAttribute("aria-label", isRead ? "mark unread" : "mark read");
-    const hxp = btn.getAttribute("hx-post");
-    if (hxp) {
-      btn.setAttribute("hx-post", hxp.replace(/state=\d/, "state=" + (isRead ? "0" : "1")));
-    }
-  };
-  //
   // wireArticle attaches the dwell-based auto-mark-read timer and a
   // cancel hook to whatever .entry-full element is passed in. It is
   // called once at document load for the standalone /ui/entry page,
@@ -721,19 +683,16 @@
         method: "POST",
         credentials: "same-origin",
       }).then(function (r) {
-        if (!r.ok) return;
-        // Patch the pane's article in place — re-fetching via htmx
-        // would re-swap the entire pane and reset scroll position
-        // (jarring at 0.7 s dwell), so we DOM-patch directly.
-        article.classList.add("read");
-        patchReadBtn(article.querySelector(".actions .readbtn"), true);
-        // Also patch the matching list row so the left pane reflects
-        // the new read state without a server round trip.
-        const row = document.getElementById("entry-" + hash);
-        if (row) {
-          row.classList.add("read");
-          patchReadBtn(row.querySelector(".readbtn"), true);
-        }
+        if (!r.ok) return null;
+        return r.text();
+      }).then(function (html) {
+        // Apply the server's unified OOB fan-out: the detail article
+        // (this pane), the matching list row, AND every affected count
+        // badge all update from the SAME server fragments — so the
+        // home/feed counts no longer drift on a dwell auto-read. The
+        // OOB article swap replaces this pane's <article> in place
+        // (the pane element persists), so scroll position is kept.
+        applyOOB(html);
       }).catch(function () { /* network hiccup — user can still click */ });
     }, dwellMs);
     const cancel = function () {
