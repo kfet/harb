@@ -3,7 +3,6 @@ package store
 import (
 	"bufio"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,7 +32,6 @@ func migrateEntryHashes(dir string) error {
 }
 
 func migrateEntryFiles(root string, remap map[string]string) error {
-	seen := map[string]string{} // canonical -> original, for collision audit
 	if err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -41,7 +39,7 @@ func migrateEntryFiles(root string, remap map[string]string) error {
 		if d.IsDir() || !strings.HasSuffix(d.Name(), ".ndjson") {
 			return nil
 		}
-		return migrateEntryFile(path, seen, remap)
+		return migrateEntryFile(path, remap)
 	}); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -51,45 +49,54 @@ func migrateEntryFiles(root string, remap map[string]string) error {
 	return nil
 }
 
-func migrateEntryFile(path string, seen, remap map[string]string) error {
+func migrateEntryFile(path string, remap map[string]string) error {
+	// First pass: read every entry so the D4 guid-reuse guard can see
+	// repeated guids across the whole file before identities are recomputed.
+	var all []Entry
+	if err := scanEntries(path, func(e Entry) error {
+		all = append(all, e)
+		return nil
+	}); err != nil {
+		return err
+	}
+	reused := reusedGUIDs(all)
+
 	var entries []Entry
 	changed := false
 	emitted := make(map[string]bool) // canonical hashes already kept in THIS file
-	if err := scanEntries(path, func(e Entry) error {
+	for _, e := range all {
 		old := e.Hash
 		canon := StoreEntryHash(old)
-		// Recompute identity for volatile-pubDate guids: the same article
-		// collapses to one stable hash even though its guid (and thus its
-		// stored hash) drifted between polls. EntryHash normalises the
-		// guid and masks the high bit, so the result is already canonical.
-		if e.GUID != "" && NormalizeGUID(e.GUID) != e.GUID {
-			if rec := EntryHash(e.GUID, e.Link); rec != canon {
-				remap[canon] = rec
-				canon = rec
-			}
+		// Recompute identity for EVERY entry under the current identity
+		// function (D1): guid-only when a guid is present, link only as
+		// fallback, title+published as last resort. When the recomputed
+		// id differs from the stored canonical hash, record old→new so the
+		// state-log rewrite carries read/starred state to the survivor.
+		// entryHashKey already masks the high bit, so the result is
+		// canonical. There is no cross-article collision alarm: distinct
+		// articles have distinct identities, and entries sharing an
+		// identity are the same article (collapsed below).
+		g := NormalizeGUID(strings.TrimSpace(e.GUID))
+		if rec := entryHashKey(e.GUID, e.Link, e.Title, e.Published, g != "" && reused[g]); rec != canon {
+			remap[canon] = rec
+			canon = rec
 		}
-		if prev, ok := seen[canon]; ok && prev != old && len(prev) > EntryHashLen && len(old) > EntryHashLen {
-			return fmt.Errorf("entry hash collision migrating %s: %s and %s both map to %s", path, prev, old, canon)
-		}
-		seen[canon] = old
 		if canon != old {
 			e.Hash = canon
 			changed = true
 		}
 		// Drop intra-file duplicates: a legacy unmasked hash and its
-		// masked re-poll (or a volatile-pubDate twin) collapse to the
+		// masked re-poll, a volatile-pubDate twin, or a slug-edited
+		// WordPress twin (same guid, drifted link) all collapse to the
 		// same canonical id, so the same article can sit in the file
 		// twice. Keep the first, prune the rest (and rewrite the file to
 		// make the prune durable).
 		if emitted[canon] {
 			changed = true
-			return nil
+			continue
 		}
 		emitted[canon] = true
 		entries = append(entries, e)
-		return nil
-	}); err != nil {
-		return err
 	}
 	if !changed {
 		return nil

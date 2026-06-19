@@ -29,11 +29,11 @@ func TestFeedHashStable(t *testing.T) {
 }
 
 func TestEntryHashStable(t *testing.T) {
-	a, b := EntryHash("g", "l"), EntryHash("g", "l")
+	a, b := EntryHash("g", "l", "", time.Time{}), EntryHash("g", "l", "", time.Time{})
 	if a != b {
 		t.Fatal("unstable")
 	}
-	if EntryHash("g", "l") == EntryHash("", "") {
+	if EntryHash("g", "l", "", time.Time{}) == EntryHash("", "", "", time.Time{}) {
 		t.Fatal("collision")
 	}
 }
@@ -684,7 +684,7 @@ func TestFeedTagHelpers(t *testing.T) {
 }
 
 func TestEntryHashLengthAndCanonical(t *testing.T) {
-	h := EntryHash("guid", "https://example.com/item")
+	h := EntryHash("guid", "https://example.com/item", "", time.Time{})
 	if len(h) != EntryHashLen {
 		t.Fatalf("EntryHash len=%d want %d (%q)", len(h), EntryHashLen, h)
 	}
@@ -708,7 +708,7 @@ func TestEntryHashLengthAndCanonical(t *testing.T) {
 // that re-introduces a top bit in the hash.
 func TestEntryHashFitsInt63(t *testing.T) {
 	for i := 0; i < 10000; i++ {
-		h := EntryHash(strconv.Itoa(i), "https://example.com/"+strconv.Itoa(i*7+3))
+		h := EntryHash(strconv.Itoa(i), "https://example.com/"+strconv.Itoa(i*7+3), "", time.Time{})
 		n, err := strconv.ParseUint(h, 16, 64)
 		if err != nil {
 			t.Fatalf("hash %q not parseable: %v", h, err)
@@ -727,7 +727,9 @@ func TestOpenMigratesLegacyEntryHashesOnDisk(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacy := "abcdef0123456789beef"
-	canon := "2bcdef0123456789"
+	// Identity now derives from the guid alone (D1); the legacy stored hash
+	// is replaced by the recomputed guid-only id on migration.
+	canon := EntryHash("g", "https://example.com/1", "one", time.Unix(1, 0))
 	entries := []Entry{{Hash: legacy, FeedHash: fh, GUID: "g", Link: "https://example.com/1", Title: "one", Published: time.Unix(1, 0), FetchedAt: time.Unix(2, 0)}}
 	var b strings.Builder
 	for _, e := range entries {
@@ -762,9 +764,10 @@ func TestOpenMigratesLegacyEntryHashesOnDisk(t *testing.T) {
 	if !s.EntryState(canon).Read || !s.EntryState(canon).Starred {
 		t.Fatalf("canonical state not preserved: %+v", s.EntryState(canon))
 	}
-	if !s.EntryState(legacy).Read || !s.EntryState(legacy).Starred {
-		t.Fatalf("legacy lookup should canonicalize: %+v", s.EntryState(legacy))
-	}
+	// Note: a legacy 20-char hash no longer round-trips to the entry's
+	// identity — identity is now the guid (D1), decoupled from the stored
+	// hash — so there is no runtime legacy→identity lookup. The migration
+	// remap (asserted below: legacy hash gone from logs) carries the state.
 	for _, p := range []string{filepath.Join(entDir, "current.ndjson"), filepath.Join(dir, "read.log"), filepath.Join(dir, "starred.log")} {
 		data, err := os.ReadFile(p)
 		if err != nil {
@@ -779,31 +782,6 @@ func TestOpenMigratesLegacyEntryHashesOnDisk(t *testing.T) {
 	}
 }
 
-func TestOpenRejectsEntryHashMigrationCollision(t *testing.T) {
-	dir := t.TempDir()
-	fh := FeedHash("https://example.com/feed")
-	entDir := filepath.Join(dir, "entries", fh)
-	if err := os.MkdirAll(entDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	entries := []Entry{
-		{Hash: "0123456789abcdefaaaa", FeedHash: fh, GUID: "a", Link: "https://example.com/a"},
-		{Hash: "0123456789abcdefbbbb", FeedHash: fh, GUID: "b", Link: "https://example.com/b"},
-	}
-	var b strings.Builder
-	for _, e := range entries {
-		line, _ := json.Marshal(e)
-		b.Write(line)
-		b.WriteByte('\n')
-	}
-	if err := os.WriteFile(filepath.Join(entDir, "current.ndjson"), []byte(b.String()), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Open(dir); err == nil || !strings.Contains(err.Error(), "entry hash collision") {
-		t.Fatalf("Open err=%v, want collision", err)
-	}
-}
-
 func TestOpenMigrationNoopForCurrentHashes(t *testing.T) {
 	dir := t.TempDir()
 	fh := FeedHash("https://example.com/current")
@@ -811,7 +789,10 @@ func TestOpenMigrationNoopForCurrentHashes(t *testing.T) {
 	if err := os.MkdirAll(entDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	e := Entry{Hash: "1bcdef0123456789", FeedHash: fh, GUID: "g", Link: "https://example.com/current/1"}
+	// A hash already equal to the current guid-only identity → migration
+	// recomputes the same value and must not rewrite the file.
+	id := EntryHash("g", "https://example.com/current/1", "", time.Time{})
+	e := Entry{Hash: id, FeedHash: fh, GUID: "g", Link: "https://example.com/current/1"}
 	line, _ := json.Marshal(e)
 	path := filepath.Join(entDir, "current.ndjson")
 	if err := os.WriteFile(path, append(line, '\n'), 0o644); err != nil {
@@ -924,6 +905,10 @@ func TestOpenDedupsHighBitHashDuplicates(t *testing.T) {
 	}
 	unmasked := "efffa66a7f27865f" // top bit set (pre-mask)
 	masked := "6fffa66a7f27865f"   // same item, masked re-poll
+	// Identity is now recomputed from the guid (D1), so both lines collapse
+	// to the guid-only id regardless of the stored hash's high bit. The
+	// StoreEntryHash fixture checks below still document the masking rule.
+	id := EntryHash("g", "https://example.com/dup/1", "dup", time.Unix(1, 0))
 	if CanonicalEntryHash(unmasked) == masked {
 		t.Fatalf("fixture: CanonicalEntryHash must be length-only, got %s", CanonicalEntryHash(unmasked))
 	}
@@ -954,11 +939,11 @@ func TestOpenDedupsHighBitHashDuplicates(t *testing.T) {
 	if len(listed) != 1 {
 		t.Fatalf("listed %d entries, want 1 (dedup failed): %+v", len(listed), listed)
 	}
-	if listed[0].Hash != masked {
-		t.Fatalf("listed hash=%s want %s", listed[0].Hash, masked)
+	if listed[0].Hash != id {
+		t.Fatalf("listed hash=%s want %s", listed[0].Hash, id)
 	}
-	if !s.EntryState(masked).Read {
-		t.Fatal("read state under legacy hash did not carry to masked hash")
+	if !s.EntryState(id).Read {
+		t.Fatal("read state under legacy hash did not carry to canonical hash")
 	}
 	// Migration must also prune the duplicate physically: the on-disk
 	// current.ndjson should hold exactly one line after Open.
@@ -1034,8 +1019,8 @@ func TestOpenDedupsVolatileGUID(t *testing.T) {
 	link := "https://feed.example/news/42/story"
 	g1 := "news/42 Mon, 18 May 2026 21:12:26 EDT"
 	g2 := "news/42 Mon, 18 May 2026 21:12:00 EDT" // seconds drifted
-	h1 := EntryHash(g1, link)
-	h2 := EntryHash(g2, link)
+	h1 := EntryHash(g1, link, "", time.Time{})
+	h2 := EntryHash(g2, link, "", time.Time{})
 	if h1 != h2 {
 		t.Fatalf("fixture: EntryHash should ignore the volatile date (%s vs %s)", h1, h2)
 	}

@@ -143,6 +143,34 @@ func TestReederCompat(t *testing.T) {
 				}
 				return st.EntryState(hash).UpdatedAt
 			},
+			SeedDriftTwin: func(t *testing.T, name, tag string) (string, string) {
+				t.Helper()
+				u := "https://feed.example/" + name
+				op.opml.Feeds = append(op.opml.Feeds, store.Feed{
+					XMLURL: u, Title: name, Tags: []string{tag},
+					HTMLURL: "https://feed.example",
+				})
+				fh := store.FeedHash(u)
+				guid := "https://feed.example/?p=12345"
+				pub := time.Unix(1700000000, 0).UTC()
+				mk := func(link string, fetched time.Time) store.Entry {
+					// Empty Hash → AppendEntries computes EntryHash
+					// (guid-only identity), mirroring the poll path.
+					return store.Entry{
+						GUID: guid, Link: link, Title: "Stable title",
+						Content: "c", Summary: "s", Published: pub, FetchedAt: fetched,
+					}
+				}
+				// First poll: /istorii/ link. Second poll: same guid,
+				// /novini/ link (slug edited after publish).
+				if _, err := st.AppendEntries(fh, []store.Entry{mk("https://feed.example/istorii/slug/", pub)}); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := st.AppendEntries(fh, []store.Entry{mk("https://feed.example/novini/slug/", pub.Add(time.Hour))}); err != nil {
+					t.Fatal(err)
+				}
+				return u, store.EntryHash(guid, "https://feed.example/istorii/slug/", "Stable title", pub)
+			},
 		}
 	})
 }

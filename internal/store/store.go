@@ -465,7 +465,7 @@ func (s *Store) AppendEntries(feedHash string, entries []Entry) ([]Entry, error)
 	var writeErr error
 	for _, e := range entries {
 		if e.Hash == "" {
-			e.Hash = EntryHash(e.GUID, e.Link)
+			e.Hash = EntryHash(e.GUID, e.Link, e.Title, e.Published)
 		} else {
 			e.Hash = StoreEntryHash(e.Hash)
 		}

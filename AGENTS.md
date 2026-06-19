@@ -74,7 +74,12 @@ starred.log                 # append-only
   per OPML 2.0; reads also accept nested folder outlines and merge
   their parent name into the tag list.
 
-- `<feed-hash>` = sha1(feed URL) prefix; `<entry-hash>` = sha1(GUID||link).
+- `<feed-hash>` = sha1(feed URL) prefix. `<entry-hash>` = the item’s
+  **identity** hash: `guid`/`atom:id` when present, else `link`, else
+  title+published — the `<link>` URL is NOT mixed in when a guid exists.
+  See **[docs/feed-identity.md](docs/feed-identity.md)** for the full
+  RSS/Atom first-principles rule, normalization rules, and the migration
+  requirement when identity inputs change.
 - **State log fold**: on startup, read `read.log` / `starred.log` into
   `map[entryHash]EntryState`. Append on mutation; compact periodically
   when log size > 10× live set.

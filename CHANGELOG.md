@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-06-19
+
+### Fixed
+
+- **The same article no longer appears twice when a feed edits an
+  item's link after publishing.** Entry identity now follows the
+  RSS/Atom spec: when an item carries a `<guid>` (RSS) or `<id>` (Atom),
+  that identifier *alone* is the dedup key. The item's `<link>` is
+  location/presentation — the spec explicitly allows it to differ from
+  the identifier and to change over time — so it is no longer mixed into
+  the identity. Previously a WordPress feed that moved a post's slug or
+  category (e.g. `/istorii/<slug>/` → `/novini/<slug>/`) shortly after
+  publishing produced a second stored entry with a new hash, surfacing
+  the article twice in clients and the web UI. Identity precedence is
+  now: guid/id → else link → else title+published (last resort, so
+  genuinely distinct linkless/untitled items stay distinct). guid/link
+  are whitespace-trimmed (but not lowercased or slash-normalised — IRI
+  path/query are case-sensitive). A defensive guard keeps feeds that
+  reuse one guid across genuinely-distinct articles (different titles)
+  from collapsing. The volatile-pubDate-in-guid normalisation (v0.12.4)
+  still applies under guid-only identity. See `docs/feed-identity.md`.
+
+  On first start after upgrade, a one-time migration recomputes every
+  stored entry's identity, collapses the duplicate pairs in place, and
+  rewrites `read.log` / `starred.log` so read/starred state follows the
+  surviving copy. Because affected entries get a new Reader item-id,
+  incremental clients (Reeder) re-deliver the surviving copy once and the
+  duplicate id disappears — no full resync is required.
+
 ## [0.15.0] - 2026-06-19
 
 ### Fixed
@@ -48,7 +77,6 @@ All notable changes to this project will be documented in this file.
   preview, and Right/Enter re-enters the feed. Pure client-side change
   (`keys.js`), gated to wide screens; stale (>5 min) returns fall back to
   the old first-feed behaviour. (Issue: home back-nav loses feed.)
-
 
 ## [0.13.0] - 2026-06-15
 
@@ -141,7 +169,6 @@ All notable changes to this project will be documented in this file.
   with empty space above it. Narrow screens are unchanged (the column
   still stacks heading → filter → manage → list).
 
-
 ## [0.11.0] - 2026-06-08
 
 ### Changed
@@ -206,7 +233,6 @@ All notable changes to this project will be documented in this file.
   (already-typed tags are preserved and filtered out). With JavaScript
   disabled the plain datalist still completes the first tag.
 
-
 ## [0.8.2] - 2026-06-08
 
 ### Added
@@ -214,7 +240,6 @@ All notable changes to this project will be documented in this file.
 - **Entry view: `→` (Right arrow) opens the source article** in a new
   window, as an alias for the existing `o` shortcut. Help overlay
   updated to show `o`/`→`.
-
 
 ## [0.8.1] - 2026-06-08
 
@@ -234,7 +259,6 @@ All notable changes to this project will be documented in this file.
   index (break-then-commit) so they still de-duplicate on the next poll
   without waiting for a restart.
 
-
 ## [0.8.0] - 2026-06-08
 
 ### Added
@@ -250,7 +274,6 @@ All notable changes to this project will be documented in this file.
   `Refresher.Concurrency` field. Each poll uses its own feed parser, so
   the fan-out is data-race-free; cancellation mid-cycle stops dispatch
   promptly and drains in-flight polls.
-
 
 ## [0.7.11] - 2026-06-08
 
@@ -274,7 +297,6 @@ All notable changes to this project will be documented in this file.
   original source URL in a new browser window/tab (no-op when the entry
   has no source link). Documented in the keyboard-help overlay.
 
-
 ## [0.7.9] - 2026-06-07
 
 ### Added
@@ -292,7 +314,6 @@ All notable changes to this project will be documented in this file.
   entry preview. The entry view now detects content with no meaningful
   text or media outside of `<a>` labels and falls back to the feed's
   summary excerpt (the separate source link is unaffected).
-
 
 ## [0.7.8] - 2026-06-06
 

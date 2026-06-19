@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"regexp"
 	"strings"
+	"time"
 )
 
 const (
@@ -34,9 +35,29 @@ func FeedHash(url string) string {
 	return hex.EncodeToString(sum[:])[:FeedHashLen]
 }
 
-// EntryHash returns the Reader-compatible short hex hash for an entry,
-// derived from the (GUID, link) pair. Either may be empty; both empty yields a
-// stable hash too, which lets us de-dup degenerate "no identity" entries.
+// EntryHash returns the Reader-compatible short hex hash that is an entry's
+// stable identity across polls. Identity precedence follows the RSS 2.0
+// <guid> and Atom (RFC 4287 §4.2.6) <id> specs:
+//
+//  1. guid / atom:id when present & non-empty  → sole key (D1).
+//  2. else <link>.
+//  3. else hash(title + published RFC3339)      → last resort (D3).
+//
+// The <guid>/<id> is the identifier; <link> is location/presentation and is
+// explicitly allowed to differ from the identifier and to change over time
+// (WordPress slug/category edits move the link while the guid is fixed), so
+// link MUST NOT be mixed into the key when a guid is present. Doing so was the
+// pre-0.15 bug that double-stored slug-edited WordPress items.
+//
+// Normalisation is deliberately minimal and spec-safe (D2): surrounding ASCII
+// whitespace is trimmed from guid and link, and NormalizeGUID strips a single
+// trailing volatile RFC 1123 date. The identity string is NOT lowercased and
+// trailing slashes are NOT touched — IRI path/query are case-sensitive and
+// slash/percent-encoding equivalence cannot be assumed.
+//
+// isPermaLink (RSS) is not consulted (D5): it governs whether a guid is a URL,
+// not whether it is the identity, and the universal gofeed parser does not
+// surface it. A guid is the identity whether or not it is also a permalink.
 //
 // The high bit of the first byte is masked off so the 16-hex hash always
 // fits in a positive int64 when decoded. Google Reader's monotonic
@@ -45,14 +66,97 @@ func FeedHash(url string) string {
 // as roughly half of items missing from the feed display. Masking the
 // high bit costs us 1 bit of hash space (still ~63 bits, no collision
 // risk at this scale) and keeps the wire format compatible.
-func EntryHash(guid, link string) string {
+//
+// This single-entry form never applies the D4 guid-reuse guard; callers that
+// process a poll/file batch should use AssignEntryHashes so feeds that misuse
+// one guid across distinct items do not collapse.
+func EntryHash(guid, link, title string, published time.Time) string {
+	return entryHashKey(guid, link, title, published, false)
+}
+
+// entryHashKey computes the masked 16-hex identity. When guidReused is true
+// (D4 guard), the link is mixed back into a present guid's key — this is
+// exactly the pre-0.15 (guid,link) scheme, so guid-reuse feeds keep their
+// existing hashes and need no migration remap.
+func entryHashKey(guid, link, title string, published time.Time, guidReused bool) string {
+	g := NormalizeGUID(strings.TrimSpace(guid))
+	l := strings.TrimSpace(link)
 	h := sha1.New()
-	h.Write([]byte(NormalizeGUID(guid)))
-	h.Write([]byte{0})
-	h.Write([]byte(link))
+	switch {
+	case g != "" && !guidReused:
+		// guid/atom:id is the sole identity (D1).
+		h.Write([]byte(g))
+	case g != "":
+		// D4 guard: feed reuses one guid across distinct items. Mix the
+		// link back in (the pre-0.15 scheme: NG(guid) \0 link).
+		h.Write([]byte(g))
+		h.Write([]byte{0})
+		h.Write([]byte(l))
+	case l != "":
+		// No guid: link is the identity (pre-0.15 empty-guid scheme:
+		// "" \0 link), so link-only feeds keep their existing hashes.
+		h.Write([]byte{0})
+		h.Write([]byte(l))
+	default:
+		// D3 last resort: no guid and no link. Use title + published so
+		// distinct linkless/untitled items stay distinct instead of all
+		// collapsing to one "no identity" hash.
+		h.Write([]byte{0})
+		h.Write([]byte(title))
+		h.Write([]byte{0})
+		h.Write([]byte(published.UTC().Format(time.RFC3339)))
+	}
 	sum := h.Sum(nil)
 	sum[0] &= 0x7F
 	return hex.EncodeToString(sum)[:EntryHashLen]
+}
+
+// reusedGUIDs returns the set of normalised guids that appear on two or more
+// entries with a differing Title within a single batch. Such feeds misuse
+// <guid> as a non-unique value across genuinely-distinct articles; for those
+// guids identity falls back to including the link (D4) so they are not
+// collapsed.
+//
+// Distinctness keys on Title ONLY, deliberately NOT on <link>. Per the RSS/Atom
+// identity spec, <link> is location/presentation and is explicitly allowed to
+// drift for the SAME article (the WordPress slug/category edit that motivates
+// this whole change), so a differing link is NOT evidence of a distinct item —
+// using it here would wrongly treat slug-edited twins as reuse and refuse to
+// collapse them (the exact bug, especially during migration where both
+// historical link variants of one article coexist on disk). Genuinely-distinct
+// articles differ in title/content. A guid repeated on items with the same
+// title is the same article re-served (link drift or a re-poll) and is NOT
+// treated as reuse.
+func reusedGUIDs(entries []Entry) map[string]bool {
+	first := map[string]string{} // guid -> first-seen title
+	reused := map[string]bool{}
+	for _, e := range entries {
+		g := NormalizeGUID(strings.TrimSpace(e.GUID))
+		if g == "" {
+			continue
+		}
+		if prev, ok := first[g]; ok {
+			if prev != e.Title {
+				reused[g] = true
+			}
+		} else {
+			first[g] = e.Title
+		}
+	}
+	return reused
+}
+
+// AssignEntryHashes sets .Hash on every entry in the batch, applying the D4
+// guid-reuse guard across the whole batch. Use this for poll and migration
+// batches; EntryHash is the per-entry form without the guard.
+func AssignEntryHashes(entries []Entry) {
+	reused := reusedGUIDs(entries)
+	for i := range entries {
+		g := NormalizeGUID(strings.TrimSpace(entries[i].GUID))
+		entries[i].Hash = entryHashKey(
+			entries[i].GUID, entries[i].Link, entries[i].Title,
+			entries[i].Published, g != "" && reused[g])
+	}
 }
 
 // trailingRFC1123 matches a single RFC 1123 date-time anchored at the end

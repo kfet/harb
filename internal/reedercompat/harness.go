@@ -46,6 +46,13 @@ type Harness struct {
 	SetRead func(t *testing.T, hash string, v bool) time.Time
 	// SetStarred is the starred counterpart of SetRead.
 	SetStarred func(t *testing.T, hash string, v bool) time.Time
+
+	// SeedDriftTwin seeds a feed with a single article, then simulates a
+	// later poll that re-serves the SAME <guid> with a drifted <link>
+	// (the WordPress slug/category edit). It returns the feed URL and the
+	// single canonical item hash the client must see. Optional: when nil,
+	// the guid-stable link-drift dedup contract is skipped.
+	SeedDriftTwin func(t *testing.T, name, tag string) (feedURL string, hash string)
 }
 
 // NewHarness is the factory the suite calls per sub-test.

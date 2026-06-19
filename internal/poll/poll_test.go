@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -84,7 +85,46 @@ func TestPollSuccess(t *testing.T) {
 	}
 }
 
-// TestPollDecodesHTMLEntitiesInTitleAndAuthor pins the regression
+// TestPollGUIDStableLinkDriftDedups is the end-to-end regression for the
+// svobodnatochka.bg bug: a feed re-serves the same <guid> with a drifted
+// <link> (slug/category edit). The second poll must NOT create a second
+// entry — identity is the guid alone (D1), so the article stays single.
+func TestPollGUIDStableLinkDriftDedups(t *testing.T) {
+	p, s, _ := newPoller(t)
+	const tmpl = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>ST</title>
+  <item>
+    <title>Same article</title>
+    <link>https://svoboda.example%s</link>
+    <guid isPermaLink="false">https://svoboda.example/?p=12345</guid>
+    <pubDate>Mon, 02 Jan 2006 15:04:05 GMT</pubDate>
+    <description>body</description>
+  </item>
+</channel></rss>`
+	link := "/istorii/slug/"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		io.WriteString(w, fmt.Sprintf(tmpl, link))
+	}))
+	defer srv.Close()
+
+	if _, err := p.Poll(context.Background(), srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	// Slug edited after publish: same guid, link moves /istorii/ → /novini/.
+	link = "/novini/slug/"
+	if _, err := p.Poll(context.Background(), srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := s.ListEntries(store.FeedHash(srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("link-drift twin not deduped: got %d entries %+v", len(listed), listed)
+	}
+}
+
 // behaviour for the title-entity-decode fix: feed titles / author
 // names that arrive with HTML entities (numeric, hex, or named) must
 // be decoded once at ingestion so the rest of the pipeline sees plain

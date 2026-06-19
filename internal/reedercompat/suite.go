@@ -101,6 +101,31 @@ func assertUnsignedInt63(t *testing.T, contract, s string) {
 // embedder-supplied Harness factory. Each sub-test gets a fresh
 // Harness via newH(t).
 func Run(t *testing.T, newH NewHarness) {
+	t.Run("guid-stable-link-drift/dedup", func(t *testing.T) {
+		// Regression: a feed that re-serves the same <guid> with a drifted
+		// <link> (WordPress slug/category edit) must surface as exactly ONE
+		// item with a STABLE id — the client (Reeder) never sees a dupe.
+		h := newH(t)
+		if h.SeedDriftTwin == nil {
+			t.Skip("harness does not implement SeedDriftTwin")
+		}
+		u, hash := h.SeedDriftTwin(t, "Drift", "Drift")
+		w := Do(t, h, "GET", "/reader/api/0/stream/contents/feed/"+u, nil)
+		if w.Code != 200 {
+			t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+		}
+		var resp streamResponseJSON
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal: %v body=%s", err, w.Body.String())
+		}
+		if len(resp.Items) != 1 {
+			t.Fatalf("compat guid-stable-link-drift/dedup: items=%d, want 1 (link-drift twin not collapsed)", len(resp.Items))
+		}
+		if resp.Items[0].ID != ItemID(hash) {
+			t.Fatalf("compat guid-stable-link-drift/dedup: id=%q want %q", resp.Items[0].ID, ItemID(hash))
+		}
+	})
+
 	t.Run("item-id-16-hex+published-timestamps/contents", func(t *testing.T) {
 		h := newH(t)
 		u, hashes := h.SeedFeed(t, "F", "F", 2)

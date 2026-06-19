@@ -59,8 +59,10 @@ func TestIndexBuildAndLookup(t *testing.T) {
 	if len(s.IndexedEntries("nope")) != 0 {
 		t.Fatal("expected empty slice for unknown feed")
 	}
-	// EntryByHash hit + miss.
-	if e, ok := s.EntryByHash("deadbeef00000000"); !ok || e.GUID != "g" {
+	// EntryByHash hit + miss. The seeded hashes are recomputed to the
+	// guid-only identity on migration, so look up by that id.
+	idG := EntryHash("g", "", "", time.Time{})
+	if e, ok := s.EntryByHash(idG); !ok || e.GUID != "g" {
 		t.Fatalf("byHash hit=%v entry=%+v", ok, e)
 	}
 	if _, ok := s.EntryByHash("nonexistenthash00"); ok {

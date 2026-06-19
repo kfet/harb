@@ -233,9 +233,11 @@ func (p *Poller) Poll(ctx context.Context, feedURL string) (int, error) {
 		} else {
 			e.Published = now
 		}
-		e.Hash = store.EntryHash(e.GUID, e.Link)
 		entries = append(entries, e)
 	}
+	// Assign identities for the whole batch so the D4 guid-reuse guard can
+	// see repeated guids across the poll's items (see AssignEntryHashes).
+	store.AssignEntryHashes(entries)
 
 	// Webflow article-text enrichment: when this feed was synthesised from
 	// a Webflow page (the resolver stamps a generator marker), fetch each
