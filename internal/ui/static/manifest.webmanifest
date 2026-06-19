@@ -1,0 +1,16 @@
+{
+  "name": "Harbour RSS",
+  "short_name": "Harbour",
+  "description": "A calm harbour for your RSS & Atom feeds.",
+  "start_url": "../",
+  "scope": "../",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0a2c4a",
+  "theme_color": "#0a2c4a",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

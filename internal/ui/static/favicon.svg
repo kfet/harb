@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Harbour RSS">
+  <defs>
+    <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a86c4"/>
+      <stop offset="1" stop-color="#0a2c4a"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#sea)"/>
+  <g fill="none" stroke="#ffffff" stroke-opacity="0.18" stroke-width="16" stroke-linecap="round">
+    <path d="M70 454 q28 -22 56 0 t56 0 t56 0 t56 0 t56 0 t56 0"/>
+  </g>
+  <g fill="none" stroke="#ffffff" stroke-width="30" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="256" cy="90" r="33"/>
+    <line x1="256" y1="123" x2="256" y2="402"/>
+    <line x1="174" y1="174" x2="338" y2="174"/>
+    <path d="M134 278 C136 360 186 414 256 418 C326 414 376 360 378 278"/>
+  </g>
+  <g fill="#ffffff">
+    <path d="M134 278 l-42 -16 l31 56 z"/>
+    <path d="M378 278 l42 -16 l-31 56 z"/>
+  </g>
+</svg>

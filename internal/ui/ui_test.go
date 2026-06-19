@@ -360,6 +360,18 @@ func TestStatic(t *testing.T) {
 	if w := do(mux, req("GET", "/ui/static/nope.css", "", nil)); w.Code != 404 {
 		t.Fatalf("nope=%d", w.Code)
 	}
+	// icon / manifest content types
+	for _, tc := range []struct{ path, ct string }{
+		{"/ui/static/favicon.svg", "image/svg+xml"},
+		{"/ui/static/favicon-32.png", "image/png"},
+		{"/ui/static/favicon.ico", "image/x-icon"},
+		{"/ui/static/manifest.webmanifest", "application/manifest+json"},
+	} {
+		w := do(mux, req("GET", tc.path, "", nil))
+		if w.Code != 200 || w.Header().Get("Content-Type") != tc.ct {
+			t.Fatalf("%s: %d %s", tc.path, w.Code, w.Header().Get("Content-Type"))
+		}
+	}
 }
 
 func TestThemeOverride(t *testing.T) {

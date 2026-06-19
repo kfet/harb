@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-06-19
+
+### Added
+
+- **App icon / favicon and iOS home-screen support.** The web UI now
+  ships a proper icon set — an anchor mark on a harbour-blue gradient.
+  Browsers get an SVG favicon (with `.ico` and 16/32px PNG fallbacks);
+  iOS/iPadOS get an `apple-touch-icon` (full-bleed square, so Safari's
+  own rounded-corner mask applies cleanly rather than double-rounding a
+  pre-rounded image). A `manifest.webmanifest` (name "Harbour RSS",
+  standalone display, theme/background `#0a2c4a`, 192/512px mascable
+  icons) makes "Add to Home Screen" install as a standalone PWA with the
+  correct name, icon, and status-bar styling. All assets are served from
+  the existing fingerprinted `/static/` route with correct content types
+  (`image/svg+xml`, `image/png`, `image/x-icon`,
+  `application/manifest+json`); icon/manifest URLs are relative so they
+  resolve correctly regardless of the UI mount path.
+
 ## [0.16.0] - 2026-06-19
 
 ### Fixed

@@ -4,6 +4,15 @@
 <meta charset="utf-8">
 <title>{{block "title" .}}Harbour RSS{{end}}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="{{.Base}}static/favicon.svg{{with .StaticVer}}?v={{.}}{{end}}" type="image/svg+xml">
+<link rel="icon" href="{{.Base}}static/favicon-32.png{{with .StaticVer}}?v={{.}}{{end}}" sizes="32x32" type="image/png">
+<link rel="alternate icon" href="{{.Base}}static/favicon.ico{{with .StaticVer}}?v={{.}}{{end}}" sizes="any">
+<link rel="apple-touch-icon" href="{{.Base}}static/apple-touch-icon.png{{with .StaticVer}}?v={{.}}{{end}}">
+<link rel="manifest" href="{{.Base}}static/manifest.webmanifest{{with .StaticVer}}?v={{.}}{{end}}">
+<meta name="theme-color" content="#0a2c4a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Harbour">
 <script>(function(){try{var t=localStorage.getItem('harb.theme');if(t==='auto'||t==='dark'||t==='light'||t==='sepia'){document.documentElement.setAttribute('data-theme',t);}}catch(e){}})();</script>
 <link rel="stylesheet" href="{{.Base}}static/style.css{{with .StaticVer}}?v={{.}}{{end}}">
 {{if .ExtraCSS}}<link rel="stylesheet" href="{{.ExtraCSS}}{{with $.StaticVer}}?v={{.}}{{end}}">{{end}}
