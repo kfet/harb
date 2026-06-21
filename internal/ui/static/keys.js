@@ -137,6 +137,10 @@
     if (t.isContentEditable) return true;
     return false;
   };
+  // A bare app shortcut must never hijack a browser/OS chord. Bail out
+  // whenever Ctrl/Cmd/Alt is held (Shift is fine — N/R/G use it) so
+  // Cmd-R / Ctrl-R (reload), Cmd-L, etc. reach the browser untouched.
+  const modKey = (e) => e.ctrlKey || e.metaKey || e.altKey;
 
   // ---- capture "return feed" on the feed entries page --------------
   // On a per-feed entries page (Scope=="feed") the manage panel carries
@@ -285,7 +289,7 @@
     return universalUp();
   };
   document.addEventListener("keydown", function (e) {
-    if (inEditable(e) || helpOpen()) return;
+    if (inEditable(e) || helpOpen() || modKey(e)) return;
     if (e.key !== "u" && e.key !== "ArrowLeft") return;
     if (universalUp()) e.preventDefault();
   });
@@ -295,7 +299,7 @@
   // entry list), pressing N navigates to the URL the pill points to.
   // No-op on pages without the pill (entry view, /ui/all, /ui/starred).
   document.addEventListener("keydown", function (e) {
-    if (inEditable(e) || helpOpen()) return;
+    if (inEditable(e) || helpOpen() || modKey(e)) return;
     if (e.key !== "N" && e.key !== "n") return;
     const pill = $("a.filter");
     if (!pill) return;
@@ -304,7 +308,7 @@
   });
 
   document.addEventListener("keydown", function (e) {
-    if (inEditable(e)) return;
+    if (inEditable(e) || modKey(e)) return;
     if (e.key === "?") { toggleHelp(); e.preventDefault(); return; }
     if (e.key === "Escape" && helpOpen()) { toggleHelp(false); e.preventDefault(); }
   }, true); // capture so help-toggle wins over page handlers
@@ -588,7 +592,7 @@
     document.addEventListener("htmx:afterSwap", reapplyFocus);
     document.addEventListener("htmx:afterSettle", reapplyFocus);
     document.addEventListener("keydown", function (e) {
-      if (inEditable(e) || helpOpen()) return;
+      if (inEditable(e) || helpOpen() || modKey(e)) return;
       switch (e.key) {
         case "j": case "ArrowDown": focusRow(idx + 1); e.preventDefault(); break;
         case "k": case "ArrowUp":   focusRow(idx - 1); e.preventDefault(); break;
@@ -708,7 +712,7 @@
     wireArticle(article);
 
     document.addEventListener("keydown", function (e) {
-      if (inEditable(e) || helpOpen()) return;
+      if (inEditable(e) || helpOpen() || modKey(e)) return;
       switch (e.key) {
         case "r": {
           const b = $(".actions button:nth-of-type(1)");

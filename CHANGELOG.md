@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-06-22
+
+### Fixed
+
+- **Keyboard shortcuts no longer hijack browser/OS modifier chords.**
+  The web UI key handlers fired on bare keys (`r`, `s`, `j`/`k`, etc.)
+  without exempting Ctrl/Cmd/Alt combinations, so **Cmd-R / Ctrl-R was
+  swallowed as "mark read" instead of reloading the page** (and likewise
+  for other reserved chords such as Cmd-L). All `keydown` handlers now
+  bail out when Ctrl, Cmd (Meta), or Alt is held, letting the browser
+  handle the chord; Shift is still allowed, since `N` / `R` / `G` need
+  it. Reload, address-bar focus, and friends work as expected again.
+- **Timezone-dependent unit test.** `TestPollRetryAfterMissing` formatted
+  a local time with `http.TimeFormat` (a literal `GMT` label) and parsed
+  it back as UTC, so on any host east of UTC the "past date" case landed
+  in the future and the test failed. It now formats in UTC. (CI runs in
+  UTC and was unaffected; the failure only bit local dev machines.)
+
 ## [0.17.0] - 2026-06-19
 
 ### Added

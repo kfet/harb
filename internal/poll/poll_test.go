@@ -371,7 +371,7 @@ func TestPollRetryAfterMissing(t *testing.T) {
 	if d := parseRetryAfter("not a date", time.Now()); d != 0 {
 		t.Fatal("expected 0 for garbage")
 	}
-	if d := parseRetryAfter(time.Now().Add(-time.Hour).Format(http.TimeFormat), time.Now()); d != 0 {
+	if d := parseRetryAfter(time.Now().UTC().Add(-time.Hour).Format(http.TimeFormat), time.Now()); d != 0 {
 		t.Fatal("expected 0 for past date")
 	}
 	if d := parseRetryAfter("-3", time.Now()); d != 0 {
