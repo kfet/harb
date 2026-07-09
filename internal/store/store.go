@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -427,23 +428,92 @@ func (s *Store) compactLocked(path string, kind byte) error {
 }
 
 // AssignEntryHashesForFeed sets .Hash on every entry in the incoming batch,
-// applying the D4 guid-reuse guard with a verdict computed over the UNION of
-// the feed's existing stored entries (s.idx[feedHash]) and the batch. Unlike
-// the pure store.AssignEntryHashes (batch-only), this makes the D1-vs-D4
-// identity basis batch-independent: once a normalised guid carries two
-// distinct-title entries on disk the reused verdict holds permanently, so an
-// item's hash cannot flip D4→D1 when a same-guid title sibling scrolls out of
-// the feed window (the re-dup bug). It changes no existing on-disk hash — only
-// which basis a NEW entry is stored under. Poll callers use this in place of
-// AssignEntryHashes; the snapshot is taken under the same read lock discipline
-// as indexedHashes and released before any file I/O.
-func (s *Store) AssignEntryHashesForFeed(feedHash string, entries []Entry) {
-	s.mu.RLock()
-	existing := s.idx[feedHash]
-	snap := make([]Entry, len(existing))
-	copy(snap, existing)
-	s.mu.RUnlock()
-	assignWithReused(entries, reusedGUIDsUnion(snap, entries))
+// applying the D4 guid-reuse guard driven by the feed's PERSISTENT sticky
+// reuse set. The sticky set is the single source of D4 and is maintained here:
+//
+//  1. Detect guids that co-occur (appear >=2 times) WITHIN this batch
+//     (reusedInBatch) — publisher-proof of reuse, computed with no title, no
+//     link, no on-disk and no cross-time input.
+//  2. Merge any newly-detected guids into the feed's persisted sticky set and
+//     rewrite the sidecar if it grew. Once a guid is marked reused for a feed
+//     it stays marked forever (monotone), so an item's basis can never flip
+//     D4->D1 when a same-guid sibling scrolls out of the feed window.
+//  3. Assign each entry's hash: D4 (link mixed in) iff its normalised guid is
+//     in the sticky set, else D1 (guid-only). Fallbacks (link, title+published)
+//     are unchanged when the guid is absent.
+//
+// The assigned hash is a PURE function of (entry fields, sticky set): batch
+// composition and ordering affect only which guids get ADDED to the sticky set,
+// never the hash computed from a given (fields, set) pair. That is the
+// invariant that ends the re-dup bug class.
+func (s *Store) AssignEntryHashesForFeed(feedHash string, entries []Entry) error {
+	sticky, err := s.loadStickyGUIDs(feedHash)
+	if err != nil {
+		return err
+	}
+	grew := false
+	for g := range reusedInBatch(entries) {
+		if !sticky[g] {
+			sticky[g] = true
+			grew = true
+		}
+	}
+	if grew {
+		if err := s.saveStickyGUIDs(feedHash, sticky); err != nil {
+			return err
+		}
+	}
+	assignWithReused(entries, sticky)
+	return nil
+}
+
+// stickyGUIDsPath is the per-feed sidecar holding the sticky reuse set: a JSON
+// array of normalised guids that route to D4 forever.
+func (s *Store) stickyGUIDsPath(feedHash string) string {
+	return filepath.Join(s.Dir, "entries", feedHash, "reused-guids.json")
+}
+
+// loadStickyGUIDs reads a feed's persistent sticky reuse set. Missing → empty.
+func (s *Store) loadStickyGUIDs(feedHash string) (map[string]bool, error) {
+	data, err := os.ReadFile(s.stickyGUIDsPath(feedHash))
+	if err != nil {
+		// Missing sidecar → no sticky set. ENOTDIR (a path component is not a
+		// directory, e.g. the feed's entries dir does not exist yet) is treated
+		// the same: there is simply no persisted set to load, and any real
+		// structural problem surfaces later when AppendEntries writes.
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+			return map[string]bool{}, nil
+		}
+		return nil, err
+	}
+	var list []string
+	if err := json.Unmarshal(data, &list); err != nil {
+		return nil, err
+	}
+	set := make(map[string]bool, len(list))
+	for _, g := range list {
+		set[g] = true
+	}
+	return set, nil
+}
+
+// saveStickyGUIDs atomically rewrites a feed's sticky reuse set. The guids are
+// sorted so the file is stable across writes (deterministic, review-friendly).
+func (s *Store) saveStickyGUIDs(feedHash string, set map[string]bool) error {
+	list := make([]string, 0, len(set))
+	for g := range set {
+		list = append(list, g)
+	}
+	sort.Strings(list)
+	data, err := jsonMarshalIndent(list, "", "  ")
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(s.Dir, "entries", feedHash)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return atomicWriteFile(s.stickyGUIDsPath(feedHash), data)
 }
 
 // AppendEntries appends entries to feed's current.ndjson. Returns the

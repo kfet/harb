@@ -42,7 +42,9 @@ DB, single-user-first, stdlib-leaning Go.
 - **Web UI**: htmx + server-rendered templates from `embed.FS`,
   themeable via a config-dir overrides directory. Cookie-session auth,
   separate from the Reader API token path.
-- **Single binary** with subcommands: `serve`, `import`, `poll-once`.
+- **Single binary** with subcommands: `serve`, `import`, `poll-once`,
+  `migrate --identity` (one-time entry-identity migration; `--dry-run`
+  previews).
 
 ## Out of scope (v0.1)
 
@@ -65,6 +67,9 @@ entries/<feed-hash>/
   current.ndjson            # hot file: last ~30 days
   2024-Q3.ndjson            # immutable archives, rolled over on poll
   2024-Q4.ndjson
+  reused-guids.json         # persistent "sticky reuse set": guids that use
+                            # the guid+link (D4) identity forever (see
+                            # docs/feed-identity.md)
 read.log                    # append-only state log: "<ts> r <entry-hash>"
 starred.log                 # append-only
 ```
@@ -76,10 +81,14 @@ starred.log                 # append-only
 
 - `<feed-hash>` = sha1(feed URL) prefix. `<entry-hash>` = the item’s
   **identity** hash: `guid`/`atom:id` when present, else `link`, else
-  title+published — the `<link>` URL is NOT mixed in when a guid exists.
+  title+published — the `<link>` URL is NOT mixed in when a guid exists,
+  EXCEPT for guids in the feed's **sticky reuse set** (guids seen ≥2× in
+  one fetch batch), which use guid+link forever. The assigned hash is a
+  pure function of (entry fields, sticky set) — never title, batch,
+  on-disk state, or published date.
   See **[docs/feed-identity.md](docs/feed-identity.md)** for the full
-  RSS/Atom first-principles rule, normalization rules, and the migration
-  requirement when identity inputs change.
+  RSS/Atom first-principles rule, the sticky-set model, normalization
+  rules, and the migration requirement when identity inputs change.
 - **State log fold**: on startup, read `read.log` / `starred.log` into
   `map[entryHash]EntryState`. Append on mutation; compact periodically
   when log size > 10× live set.

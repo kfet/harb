@@ -68,8 +68,9 @@ func FeedHash(url string) string {
 // risk at this scale) and keeps the wire format compatible.
 //
 // This single-entry form never applies the D4 guid-reuse guard; callers that
-// process a poll/file batch should use AssignEntryHashes so feeds that misuse
-// one guid across distinct items do not collapse.
+// process a poll/file batch should use AssignEntryHashes (batch-only reuse
+// detection) or Store.AssignEntryHashesForFeed (persistent sticky reuse set),
+// so feeds that misuse one guid across distinct items do not collapse.
 func EntryHash(guid, link, title string, published time.Time) string {
 	return entryHashKey(guid, link, title, published, false)
 }
@@ -111,58 +112,44 @@ func entryHashKey(guid, link, title string, published time.Time, guidReused bool
 	return hex.EncodeToString(sum)[:EntryHashLen]
 }
 
-// reusedGUIDs returns the set of normalised guids that appear on two or more
-// entries with a differing Title within a single batch. Such feeds misuse
-// <guid> as a non-unique value across genuinely-distinct articles; for those
-// guids identity falls back to including the link (D4) so they are not
-// collapsed.
+// reusedInBatch returns the set of normalised guids that appear on two or more
+// entries WITHIN a single fetch/parse batch. Co-occurrence of one guid on two
+// items in a single feed pull is publisher-proof that the feed misuses <guid>
+// as a non-unique value across genuinely-distinct articles (the CBC case: two
+// unrelated stories share a recycled article-number guid and are both listed
+// live in the same fetch). For those guids identity falls back to including the
+// link (D4) so they are not collapsed.
 //
-// Distinctness keys on Title ONLY, deliberately NOT on <link>. Per the RSS/Atom
-// identity spec, <link> is location/presentation and is explicitly allowed to
-// drift for the SAME article (the WordPress slug/category edit that motivates
-// this whole change), so a differing link is NOT evidence of a distinct item —
-// using it here would wrongly treat slug-edited twins as reuse and refuse to
-// collapse them (the exact bug, especially during migration where both
-// historical link variants of one article coexist on disk). Genuinely-distinct
-// articles differ in title/content. A guid repeated on items with the same
-// title is the same article re-served (link drift or a re-poll) and is NOT
-// treated as reuse.
-func reusedGUIDs(entries []Entry) map[string]bool {
-	return reusedGUIDsUnion(nil, entries)
-}
-
-// reusedGUIDsUnion computes the reuse verdict over the union of a feed's
-// EXISTING stored entries and an incoming batch. The verdict is monotone in
-// the existing set: once a normalised guid carries two distinct-title entries
-// on disk it is reused permanently, regardless of which siblings happen to be
-// in the current poll window.
+// The detector is deliberately COUNT-based and consults NEITHER titles, links,
+// published dates, NOR any on-disk / cross-time state. Within-batch
+// co-occurrence alone marks reuse. This is the ONLY reuse signal:
 //
-// This batch-independence is the fix for the guid-reuse re-dup: a per-batch
-// verdict (existing == nil) flips an item's identity basis D4→D1 the moment a
-// same-guid title sibling scrolls out of the feed window, changing its hash
-// and re-storing the article as new (the NWR "Star Fox" case). Seeding the
-// first-seen map from disk pins the basis. Existing on-disk hashes are NOT
-// affected — this only decides which basis a NEW entry is stored under.
-func reusedGUIDsUnion(existing, batch []Entry) map[string]bool {
-	first := map[string]string{} // guid -> first-seen title
+//   - It never compares titles. Title drift (HTML-entity decoding, editorial
+//     re-heading) is not evidence of anything (the v0.18.0 title-drift inverse
+//     dup) and must not enter the identity basis.
+//   - It never compares against stored entries. A WordPress slug-edited article
+//     lists its guid exactly ONCE per batch (only the current slug is live), so
+//     its guid is never marked reused, its link never enters the identity, and
+//     the drifted-link copies collapse to the guid-only D1 identity.
+//   - It never looks across polls. The persistent decision lives in the feed's
+//     sticky reuse set (see Store.AssignEntryHashesForFeed), seeded from this
+//     within-batch detector and from migration; this pure function only reports
+//     what a single batch proves.
+func reusedInBatch(entries []Entry) map[string]bool {
+	count := map[string]int{}
+	for _, e := range entries {
+		g := NormalizeGUID(strings.TrimSpace(e.GUID))
+		if g == "" {
+			continue
+		}
+		count[g]++
+	}
 	reused := map[string]bool{}
-	mark := func(entries []Entry) {
-		for _, e := range entries {
-			g := NormalizeGUID(strings.TrimSpace(e.GUID))
-			if g == "" {
-				continue
-			}
-			if prev, ok := first[g]; ok {
-				if prev != e.Title {
-					reused[g] = true
-				}
-			} else {
-				first[g] = e.Title
-			}
+	for g, n := range count {
+		if n >= 2 {
+			reused[g] = true
 		}
 	}
-	mark(existing)
-	mark(batch)
 	return reused
 }
 
@@ -177,12 +164,14 @@ func assignWithReused(entries []Entry, reused map[string]bool) {
 }
 
 // AssignEntryHashes sets .Hash on every entry in the batch, applying the D4
-// guid-reuse guard across the whole batch. Use this for migration batches and
-// callers without a feed context; EntryHash is the per-entry form without the
-// guard. Poll callers should prefer Store.AssignEntryHashesForFeed, which makes
-// the D1/D4 basis batch-independent by folding in the feed's on-disk entries.
+// guid-reuse guard for guids that co-occur (appear >=2 times) WITHIN this
+// batch. Use this for callers without a persistent feed context (the property
+// test, migration recompute helpers); EntryHash is the per-entry form without
+// any guard. Poll callers use Store.AssignEntryHashesForFeed, which folds the
+// feed's persistent sticky reuse set so a guid marked reused in an earlier
+// batch stays D4 forever.
 func AssignEntryHashes(entries []Entry) {
-	assignWithReused(entries, reusedGUIDs(entries))
+	assignWithReused(entries, reusedInBatch(entries))
 }
 
 // trailingRFC1123 matches a single RFC 1123 date-time anchored at the end
@@ -242,6 +231,31 @@ func StoreEntryHash(hash string) string {
 		b[0] = c - 47 // 'a'..'f' (10..15) masked to 2..7 -> '2'..'7'
 	}
 	return string(b)
+}
+
+// absoluteURIScheme matches an RFC 3986 scheme followed by ':' anchored at the
+// start of a string (e.g. "https:", "tag:", "urn:").
+var absoluteURIScheme = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`)
+
+// IsAbsoluteURIGUID reports whether a normalised guid is an absolute-URI-form
+// identifier (has an RFC 3986 scheme). It is the migration seeding
+// discriminator between a self-describing publisher identity and an opaque
+// token:
+//
+//   - URI-form guid (WordPress ?p=N permalink, Tumblr post URL, tag:/urn:uuid:
+//     Atom id): the publisher minted a stable identity contract. Same guid =
+//     same item; link/title drift means the item was edited. On-disk same-guid
+//     groups collapse to one survivor (D1); the guid is NOT marked reused.
+//   - Opaque token (CBC "9.7227935", "editorial/75136"): carries no identity
+//     contract and is empirically recycled across genuinely-distinct articles.
+//     An on-disk same-guid group with >=2 distinct links is treated as reuse:
+//     the guid is marked sticky and members stay distinct (D4).
+//
+// This is used ONLY by one-time migration seeding to decide sticky-set
+// membership. It never enters the entry hash, which stays a pure function of
+// (entry fields, sticky set).
+func IsAbsoluteURIGUID(normalizedGUID string) bool {
+	return absoluteURIScheme.MatchString(normalizedGUID)
 }
 
 func isHex(s string) bool {

@@ -4,6 +4,64 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-07-09
+
+### Fixed
+
+- **Entry identity no longer flips basis between polls — the class of
+  "old article resurfaces as new/unread" duplicates is closed.** The
+  identity basis (guid-only `D1` vs guid+link `D4`) used to be chosen
+  from **unstable** signals: the poll batch window (v0.16.0), a disk
+  union (v0.18.0), and item **title**. Three proven failure modes
+  resulted — a same-guid sibling scrolling out of the feed window
+  flipping D4→D1 (NWR `news/75967` "Star Fox"); an on-disk title vs
+  fresh-parsed title differing only by HTML-entity decoding
+  (`&hellip;` vs `…`) faking reuse (v0.18.0 inverse dup); and legacy
+  D4 copies mismatching a re-listed D1 (CBC, Sarah Andersen).
+
+  Identity is now **`D1 = sha1(NormalizeGUID(guid))` always**, except
+  guids in a **persistent, per-feed "sticky reuse set"**, which are
+  **`D4 = sha1(NormalizeGUID(guid) \0 link)` forever**. A guid enters
+  the sticky set only by **within-single-batch co-occurrence** (a guid
+  on ≥2 items in one fetch — count-based, never title/link/disk/time).
+  The assigned hash is a **pure function of `(entry fields, sticky
+  set)`**: batch composition can only *grow* the set, never re-hash a
+  stored item. WordPress slug-drift feeds (guid listed once per batch)
+  collapse to guid-only D1; CBC-style distinct articles sharing a
+  recycled guid co-occur in a batch, stay D4, stay distinct. The sticky
+  set is stored per feed in `entries/<feed-hash>/reused-guids.json`.
+
+### Added
+
+- **`harb migrate --identity` — a one-time, version-gated, idempotent
+  migration to the sticky-identity model, with a `--dry-run` preview.**
+  The dry-run emits a full human-reviewable report — every collapse
+  group (guid, link, title, published, old hashes, read/star state,
+  chosen survivor), every sticky-set marking, and an old→new hash map
+  artifact (`--map-out`) — and writes nothing, so an operator can
+  eyeball it on a copy of live data before the real run. Migration
+  seeds the sticky set conservatively by **guid form**: an opaque-token
+  guid (e.g. CBC `9.7227935`) with ≥2 distinct on-disk links is genuine
+  reuse → marked sticky, kept distinct; a URI-form guid (WordPress
+  `?p=N`, Tumblr, `tag:`/`urn:`) is a stable identity → collapsed to one
+  survivor. Read/starred state is remapped **in place** through the
+  old→new map (survivor read/starred if any collapsed copy was),
+  survivor `fetched_at` is the earliest copy's (so it does not resurface
+  as new in Reeder), and accounting asserts (`survivor_count = old −
+  collapses`, exact starred-count, read state preserved) guard the run.
+
+### Changed
+
+- `Store.AssignEntryHashesForFeed` now drives identity from the
+  persistent sticky reuse set (removing the v0.18.0 on-disk union /
+  title-comparison path entirely). `Open`'s startup migration is now
+  **format-only** (legacy 20→16-char + high-bit-mask canonicalization);
+  all identity-basis decisions live in the explicit `harb migrate
+  --identity` step.
+- `docs/feed-identity.md` rewritten to describe the sticky-set model,
+  the pure-function invariant, and the migration.
+
+
 ## [0.18.0] - 2026-07-09
 
 ### Fixed

@@ -29,10 +29,10 @@ github.com/kfet/harb/internal/selfupdate/selfupdate.go
 # between migration and folding. The direct foldLog error path is exercised.
 # buildIndex's top-level ReadDir error is similarly race-only (entries/
 # was just walked by migrateEntryHashes).
-github.com/kfet/harb/internal/store/store.go:130\.71,132\.3
-github.com/kfet/harb/internal/store/store.go:133\.74,135\.3
-github.com/kfet/harb/internal/store/store.go:137\.39,139\.3
-github.com/kfet/harb/internal/store/store.go:152\.3,152\.13
+github.com/kfet/harb/internal/store/store.go:131\.71,133\.3
+github.com/kfet/harb/internal/store/store.go:134\.74,136\.3
+github.com/kfet/harb/internal/store/store.go:138\.39,140\.3
+github.com/kfet/harb/internal/store/store.go:153\.3,153\.13
 github.com/kfet/harb/internal/store/store.go:244\.3,244\.13
 
 # FileOPML lazy init uses double-checked locking. The second nil-check
@@ -91,3 +91,45 @@ github.com/kfet/harb/internal/poll/enrich.go:195\.16,197\.3
 github.com/kfet/harb/internal/poll/enrich.go:212\.16,214\.3
 github.com/kfet/harb/internal/poll/enrich.go:297\.16,299\.3
 github.com/kfet/harb/internal/poll/enrich.go:105\.16,107\.3
+
+# Sticky-identity migration (idmigrate.go) + sticky sidecar (store.go):
+# defensive error returns and by-construction invariants. Every reachable
+# behaviour (seeding, collapse, in-place OR-preserving state remap, dry-run,
+# version-gate skip, idempotence, corrupt-sidecar / malformed-ndjson /
+# unreadable-dir / read-only-apply faults) is exercised; what remains is:
+# - identityMarkerPresent's non-ErrNotExist os.Stat error (125-127, 515): a
+#   filesystem race; both the present and ErrNotExist arms ARE tested.
+# - Accounting-invariant abort (245-248): survivor_count = old − collapses holds
+#   by construction (survivors is the distinct-newHash set); guard cannot fire.
+# - assertStatePreserved error propagation (257-262) and its "no survivor" arm
+#   (498-500): every remap value is a survivor newHash by construction, so the
+#   error is unreachable; the happy path + orphan-hash skip ARE tested.
+# - Apply-phase saveStickyGUIDs / read.log remap error arms (277-279, 285-290):
+#   mid-apply I/O failures after applyFileRewrites already succeeded;
+#   applyFileRewrites' own failure IS tested (read-only feed dir).
+# - jsonMarshal(Entry) in applyFileRewrites (354-356) and the marker marshal
+#   (525-527): encoding a fixed struct of strings/times/slices never errors
+#   (same class as the existing passkey/reader marshal covignores).
+# - gatherFeedEntries ErrNotExist arm (391-393): feedHashDirs only yields dirs
+#   that exist; the read-error arm IS tested.
+# - remapStateLog non-ErrNotExist open error (560) and scanner error (590-595):
+#   the ErrNotExist arm + happy/drop paths ARE tested; these are the same
+#   defensive I/O branches as the covered migrateStateLog equivalents.
+github.com/kfet/harb/internal/store/idmigrate.go:125\.58,127\.4
+github.com/kfet/harb/internal/store/idmigrate.go:246\.86,249\.3
+github.com/kfet/harb/internal/store/idmigrate.go:258\.83,260\.3
+github.com/kfet/harb/internal/store/idmigrate.go:261\.83,263\.3
+github.com/kfet/harb/internal/store/idmigrate.go:277\.53,279\.4
+github.com/kfet/harb/internal/store/idmigrate.go:285\.104,287\.3
+github.com/kfet/harb/internal/store/idmigrate.go:288\.107,290\.3
+github.com/kfet/harb/internal/store/idmigrate.go:354\.18,356\.5
+github.com/kfet/harb/internal/store/idmigrate.go:391\.37,393\.4
+github.com/kfet/harb/internal/store/idmigrate.go:498\.17,500\.4
+github.com/kfet/harb/internal/store/idmigrate.go:515\.2,515\.19
+github.com/kfet/harb/internal/store/idmigrate.go:525\.16,527\.3
+github.com/kfet/harb/internal/store/idmigrate.go:560\.3,560\.13
+github.com/kfet/harb/internal/store/idmigrate.go:590\.33,592\.3
+github.com/kfet/harb/internal/store/idmigrate.go:593\.14,595\.3
+
+# saveStickyGUIDs marshal (509): json.Marshal of a sorted []string never errors.
+github.com/kfet/harb/internal/store/store.go:509\.16,511\.3

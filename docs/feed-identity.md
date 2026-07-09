@@ -50,51 +50,58 @@ identity = NormalizeGUID(trim(guid))         if guid non-empty
 - **title+published** is the last-resort so distinct untitled & linkless items
   do not all collapse to one id.
 
-### Exception: broken feeds that reuse a guid
-Some feeds wrongly emit the **same guid on multiple distinct items**. If a
-batch (poll or migration) contains one guid on ≥2 items whose **title** differs,
-that feed misuses guid as a non-unique value; for that guid harb falls back to
-including link in the key, so genuinely-distinct items are not collapsed.
+### Exception: broken feeds that reuse a guid — the sticky reuse set
+Some feeds wrongly emit the **same guid on multiple distinct items** (CBC
+recycles a stale numeric story id across two unrelated articles). For such a
+guid harb mixes `<link>` back into the key (basis **D4** =
+`sha1(NormalizeGUID(guid) \0 link)`) so genuinely-distinct items are not
+collapsed. Every other guid uses **D1** = `sha1(NormalizeGUID(guid))`.
 
-Distinctness keys on **title only**, deliberately **not** on `<link>`: link is
-location/presentation and is explicitly allowed to drift for the *same* article
-(the whole point of this change), so a differing link is not evidence of a
-distinct item — keying on it would refuse to collapse slug-edited twins,
-especially during migration where both historical link variants of one article
-coexist on disk. Live-data validation confirms the necessity: e.g. CBC reuses a
-stale story id (`9.7050838`) across two genuinely-distinct articles whose links
-carry different story numbers — title-distinctness keeps those apart, while
-same-title link-only drift (the WordPress bug) still collapses. The residual
-cost is that an article whose publisher edits **both** its title and its slug is
-kept as two entries (can't be distinguished from genuine guid-reuse) — erring
-toward keeping distinct never loses data.
+The set of D4 guids is a **persistent, per-feed "sticky reuse set"**, and it is
+the **only** source of D4. It is maintained by one rule:
 
-#### Batch-independence guarantee
-The reuse verdict must be **stable across polls**, not a function of which items
-happen to share the current feed window. A verdict computed over the poll batch
-alone flips an item's basis the moment a same-guid title sibling scrolls out of
-the feed: a guid that read as *reused* (link mixed in, D4) while both titles were
-in-window silently reverts to *not-reused* (guid-only, D1) once the sibling ages
-out, changing the hash and re-storing the same article as new. This bit the
-Nintendo World Report feed, which re-duplicated `news/75967` ("Star Fox Gets
-Free Demo") a month after first ingest when its typo-titled sibling left the
-window.
+> **Detection = within-single-batch co-occurrence.** A normalized guid that
+> appears on ≥2 items *within one fetch/parse pass* is publisher-proof of reuse.
+> Detection is **count-based only** — it never compares titles, never compares
+> against on-disk entries, and never looks across polls.
 
-So at **poll time** harb computes the verdict over the **union of the feed's
-existing stored entries and the incoming batch** (`Store.AssignEntryHashesForFeed`),
-seeding the first-seen title map from `s.idx[feedHash]` before folding in the
-batch. The verdict is then **monotone**: once a guid carries two distinct-title
-entries on disk it stays reused permanently, so an item's identity basis never
-flips with window composition. This changes **no existing on-disk hash** and
-needs no migration — it only pins which basis a *new* entry is stored under. The
-pure batch-only `AssignEntryHashes` is retained for migration and callers without
-a feed context.
+Once a guid is detected reused it is added to the feed's sticky set
+(`entries/<feed-hash>/reused-guids.json`) and **stays marked forever**
+(monotone). Routing is then trivial: a marked guid → D4 permanently; every other
+guid → D1.
 
-The one residual case: if a same-guid title variant appears *after* the original
-was already stored solo, the original's first poll (which had no sibling on disk
-or in batch) may still produce a single duplicate at the instant the second title
-first arrives. That is pre-existing and accepted — solving it via a link/title
-basis would regress slug-drift collapse (above).
+Why this is correct on real feeds:
+- **WordPress slug-drift** feeds list a given guid **once per batch** (only the
+  current slug is live), so the guid is never marked, link never enters its
+  identity, and the drifted-link copies collapse to the guid-only D1 identity.
+- **CBC-style** distinct articles sharing a recycled guid **do co-occur** in a
+  single fetch → marked → kept distinct via D4.
+
+Title drift (HTML-entity decoding `&hellip;` vs `…`, editorial re-heading) is
+**never** consulted, closing the v0.18.0 title-drift inverse-dup. Published date
+is never consulted either.
+
+#### The core invariant
+> The assigned hash is a **pure function of `(entry fields, sticky set)`**. No
+> batch composition, no on-disk state, no title, and no published date enters
+> the hash.
+
+Batch composition and ordering affect only *which* guids get **added** to the
+sticky set — never the hash computed from a given `(fields, set)` pair. Because
+the set only ever grows, an already-stored item can never re-hash under a
+different basis, which is what ends the re-duplication bug class (proven by a
+property test that polls permuted batch compositions and asserts no item is ever
+stored under two hashes).
+
+**Known residual (accepted):** the *first* time a guid becomes reused, an
+already-stored solo-D1 entry yields one transition duplicate. Rare, and erring
+toward keeping an extra copy never loses data. A second residual: an opaque-guid
+feed whose *same* article merely drifts its link is marked sticky by the
+migration seeding (below) and keeps one historical duplicate — again the
+data-preserving direction, surfaced in the migration dry-run for review.
+
+The basis is therefore **monotone and never title- or date-based**: a guid moves
+D1 → D4 at most once (when first seen reused) and never moves back.
 
 
 ## Safe vs unsafe normalization
@@ -120,18 +127,63 @@ them. `CanonicalEntryHash` / `StoreEntryHash` normalise legacy on-disk hashes;
 ## Changing identity inputs requires a migration (hard-won lesson)
 
 Any change to what `EntryHash` consumes **must** ship a migration that:
-1. recomputes every stored entry's hash from `(guid, link, title)` with the new
-   rule, and
-2. **remaps `read.log` and `starred.log` through the same old→new map**, so the
-   surviving entry of a collapsed duplicate inherits its read/starred state.
+1. recomputes every stored entry's hash under the new rule, collapsing the
+   resulting duplicates to one survivor per identity, and
+2. **remaps `read.log` and `starred.log` through the same old→new map** in
+   place, so the surviving entry of a collapsed duplicate inherits its
+   read/starred state.
 
-Skipping (2) causes mass re-duplication and lost triage state. The machinery
-lives in `internal/store/migrate.go` (`migrateEntryFile` collapses intra-file
-dups keeping the first occurrence; `migrateStateLog` rewrites the logs via
-`remap`). Validate every such change against a **copy of live data** before
-release — assert the target dups collapse, starred count is unchanged, read
-state is preserved, and that feeds which legitimately share a link across
-distinct guids do **not** collapse.
+Skipping (2) causes mass re-duplication and lost triage state.
+
+### The one-time sticky-identity migration (`harb migrate --identity`)
+The v0.19.0 move to the sticky reuse set ships a dedicated, **version-gated,
+idempotent** migration in `internal/store/idmigrate.go` (`MigrateIdentity`),
+exposed as a subcommand:
+
+```
+harb migrate --identity --dry-run   # preview: full report, writes nothing
+harb migrate --identity             # apply (no-op if already applied)
+harb migrate --identity --dry-run --map-out old-new.json   # also dump the hash map
+```
+
+It is a **separate explicit step** (never run implicitly at `serve`/`Open`) so
+the operator can eyeball the dry-run report on a copy of live data first. What it
+does:
+
+1. **Seed the sticky set conservatively from disk.** The disk contains dups
+   *produced by the old bugs*, so a same-guid group with ≥2 on-disk entries is
+   **not** blindly marked reused. The discriminator is the **guid form**:
+   - a same-guid group with ≥2 distinct links whose guid is an **opaque token**
+     (not an absolute URI — CBC `9.7227935`, `editorial/75136`) is genuine
+     publisher reuse → **mark the guid sticky**, keep members distinct (D4);
+   - a **URI-form** guid (WordPress `?p=N`, Tumblr post URL, `tag:`/`urn:uuid:`)
+     is a stable publisher identity contract → **do not mark**; link/title drift
+     is the same item edited → collapse to one survivor (D1).
+2. **Recompute + collapse.** Every entry hash is recomputed under the new scheme
+   and duplicates collapse to one survivor. Survivor `fetched_at` = the
+   **earliest** copy's, so `timestampUsec = max(published, fetched)` does not
+   resurface a survivor as new in Reeder.
+3. **State remap in place.** `read.log` / `starred.log` hash columns are
+   rewritten (copy + atomic swap), never appended — appended lines would carry
+   new timestamps and shift GReader ordering/cutoff. A survivor is read if any
+   collapsed copy was read, starred if any was starred.
+4. **Accounting asserts** guard the run and abort before writing on any
+   violation: every old hash maps, `survivor_count = old_count − intended
+   collapses`, exact starred-count preservation, read state preserved.
+
+Every collapse group and every sticky marking appears in the dry-run report
+(guid, link, title, published, old hashes, read/star state, chosen survivor)
+plus the full old→new hash map artifact. The migration is a **fixed point** — a
+second run finds single-member groups and unchanged hashes — and version-gated
+by an `identity-migration.json` marker so it runs once.
+
+For entries whose hash is **unchanged**, Reeder item-ids stay byte-stable
+(item-ids derive from the stored hash; verified by `reedercompat`).
+
+`Open` still performs a small **format-only** canonicalization
+(`migrateEntryHashes`: legacy 20→16-char truncation + high-bit mask, collapsing
+exact-format duplicates). That path never changes an identity basis — all
+data-affecting identity decisions live in `MigrateIdentity`.
 
 ## History
 
@@ -141,11 +193,25 @@ distinct guids do **not** collapse.
 - **v0.15.0** — volatile **link** (WordPress slug/category edited post-publish
   while guid stays stable). Identity moved to **guid-only when present**; this
   document. *(link drifted, guid stable — the mirror image of v0.12.4.)*
+- **v0.16.0 – v0.18.0** — guid-reuse guard iterations that keyed the D1/D4
+  decision on **title** and/or an **on-disk/batch-window union**. Both leaked an
+  unstable signal into identity: a per-batch verdict flipped when a same-guid
+  sibling scrolled out of the window (NWR `news/75967`), and the disk-union +
+  title-drift variant produced an inverse dup when an on-disk title differed from
+  a fresh-parsed one only by HTML-entity decoding. **Superseded.**
+- **v0.19.0** — the **sticky reuse set**. D1 always, except guids in a
+  persistent per-feed set (detected purely by within-batch co-occurrence) which
+  are D4 forever. The assigned hash is a pure function of `(entry fields, sticky
+  set)` — never title, batch, disk, or date. Ships the one-time
+  `harb migrate --identity` migration (opaque-token vs URI-form seeding,
+  collapse, in-place state remap). *(ends the D1↔D4 flip bug class.)*
 
 ## Source
 
 - RSS 2.0 spec — `<guid>` element (RSS Advisory Board / Harvard cyber.law).
 - RFC 4287 (The Atom Syndication Format) §4.2.6 `atom:id`.
 - Code: `internal/store/hash.go` (`EntryHash`, `NormalizeGUID`,
-  `CanonicalEntryHash`, `StoreEntryHash`), `internal/poll/poll.go` (ingestion),
-  `internal/store/migrate.go` (migration).
+  `IsAbsoluteURIGUID`, `reusedInBatch`, `CanonicalEntryHash`, `StoreEntryHash`),
+  `internal/store/store.go` (`AssignEntryHashesForFeed`, sticky sidecar),
+  `internal/poll/poll.go` (ingestion), `internal/store/idmigrate.go`
+  (`MigrateIdentity`), `internal/store/migrate.go` (format-only Open migration).

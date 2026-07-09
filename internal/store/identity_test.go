@@ -80,10 +80,12 @@ func TestEntryHashNormalizeGUIDComposes(t *testing.T) {
 }
 
 // TestAssignEntryHashesGUIDReuseGuard: D4 — a feed that reuses one guid on
-// distinct items must NOT collapse them; the guard mixes the link back in for
-// that guid's batch.
+// distinct items WITHIN a single batch must NOT collapse them; within-batch
+// co-occurrence (>=2 items sharing a guid) marks the guid reused and mixes the
+// link back in. Detection is count-based only — no title, no cross-time input.
 func TestAssignEntryHashesGUIDReuseGuard(t *testing.T) {
-	// Same guid, different link AND title → reuse → distinct ids.
+	// Same guid on two items in one batch → co-occurrence → reuse → distinct
+	// ids (links differ).
 	reuse := []Entry{
 		{GUID: "shared", Link: "https://example.com/1", Title: "One"},
 		{GUID: "shared", Link: "https://example.com/2", Title: "Two"},
@@ -93,8 +95,9 @@ func TestAssignEntryHashesGUIDReuseGuard(t *testing.T) {
 		t.Fatal("guid-reuse guard must keep distinct items distinct")
 	}
 
-	// Same guid, same (link,title) on two lines → a re-poll of one item, NOT
-	// reuse → collapse to one id (guid-only).
+	// Same guid, same link on two lines → a re-poll of one item. Co-occurrence
+	// still marks reuse (D4), but D4 mixes in the identical link so the two
+	// still collapse to one id.
 	dup := []Entry{
 		{GUID: "g", Link: "https://example.com/x", Title: "X"},
 		{GUID: "g", Link: "https://example.com/x", Title: "X"},
@@ -103,22 +106,18 @@ func TestAssignEntryHashesGUIDReuseGuard(t *testing.T) {
 	if dup[0].Hash != dup[1].Hash {
 		t.Fatal("identical re-poll must collapse")
 	}
-	// Same guid, SAME title, different link → slug-edited twin of one
-	// article (link drift), NOT reuse → must collapse (guid-only).
-	drift := []Entry{
+
+	// A guid appearing exactly ONCE in the batch is NOT reused → guid-only D1,
+	// so an empty-guid sibling keeps its own link identity.
+	solo := []Entry{
 		{GUID: "g", Link: "https://example.com/istorii/s", Title: "Same"},
-		{GUID: "g", Link: "https://example.com/novini/s", Title: "Same"},
-		{GUID: "", Link: "https://example.com/no-guid", Title: "No guid"}, // empty guid skipped by guard
+		{GUID: "", Link: "https://example.com/no-guid", Title: "No guid"},
 	}
-	AssignEntryHashes(drift)
-	if drift[0].Hash != drift[1].Hash {
-		t.Fatal("slug-edited twin (same title, drifted link) must collapse")
-	}
-	if drift[2].Hash == drift[0].Hash {
-		t.Fatal("empty-guid entry must keep its own (link) identity")
-	}
-	// And the non-reuse case equals the plain guid-only EntryHash.
-	if dup[0].Hash != EntryHash("g", "https://example.com/x", "X", time.Time{}) {
+	AssignEntryHashes(solo)
+	if solo[0].Hash != EntryHash("g", "https://example.com/istorii/s", "Same", time.Time{}) {
 		t.Fatal("non-reuse identity must equal guid-only EntryHash")
+	}
+	if solo[1].Hash == solo[0].Hash {
+		t.Fatal("empty-guid entry must keep its own (link) identity")
 	}
 }

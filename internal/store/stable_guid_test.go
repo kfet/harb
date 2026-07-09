@@ -63,9 +63,12 @@ func TestNWRStarFoxNoReDup(t *testing.T) {
 	corrected.FeedHash = fh
 	typo := Entry{FeedHash: fh, GUID: nwrGUID, Link: nwrTypoLink, Title: nwrTypoTitle}
 
-	// Seed disk: both title-siblings present → D4 verdict.
+	// Seed disk: both siblings share news/75967 in ONE batch → within-batch
+	// co-occurrence marks the guid sticky (reused) → D4, and it stays sticky.
 	seed := []Entry{corrected, typo}
-	s.AssignEntryHashesForFeed(fh, seed)
+	if err := s.AssignEntryHashesForFeed(fh, seed); err != nil {
+		t.Fatal(err)
+	}
 	added, err := s.AppendEntries(fh, seed)
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +78,7 @@ func TestNWRStarFoxNoReDup(t *testing.T) {
 	}
 	d4 := seed[0].Hash // corrected under D4
 
-	// The batch-only (pre-fix) verdict for a lone corrected item is D1 — a
+	// The batch-only (no-sticky) verdict for a lone corrected item is D1 — a
 	// DIFFERENT hash. That divergence is exactly the re-dup.
 	lone := []Entry{{FeedHash: fh, GUID: nwrGUID, Link: nwrLink, Title: nwrTitle}}
 	AssignEntryHashes(lone)
@@ -83,10 +86,12 @@ func TestNWRStarFoxNoReDup(t *testing.T) {
 		t.Fatal("expected batch-only verdict to differ (D1 vs D4) — test premise broken")
 	}
 
-	// Later poll: ONLY the corrected item. Feed-aware assignment must pin D4
-	// from the on-disk siblings, so nothing new is added.
+	// Later poll: ONLY the corrected item. The PERSISTENT sticky set pins D4,
+	// so nothing new is added.
 	poll := []Entry{{FeedHash: fh, GUID: nwrGUID, Link: nwrLink, Title: nwrTitle}}
-	s.AssignEntryHashesForFeed(fh, poll)
+	if err := s.AssignEntryHashesForFeed(fh, poll); err != nil {
+		t.Fatal(err)
+	}
 	if poll[0].Hash != d4 {
 		t.Fatalf("feed-aware hash flipped: got %s want on-disk D4 %s", poll[0].Hash, d4)
 	}
@@ -99,9 +104,10 @@ func TestNWRStarFoxNoReDup(t *testing.T) {
 	}
 }
 
-// TestAssignEntryHashesForFeed_WordPressSlugDrift is case 2: a stable-guid,
-// same-title article whose link drifts /istorii<->/novini must still collapse
-// (guid-only D1) even with the union verdict — link drift is NOT reuse.
+// TestAssignEntryHashesForFeed_WordPressSlugDrift is case 2: a stable-guid
+// article whose link drifts /istorii<->/novini across SEPARATE polls must
+// collapse (guid-only D1). Each poll lists the guid exactly once, so it never
+// co-occurs and never becomes sticky — link never enters its identity.
 func TestAssignEntryHashesForFeed_WordPressSlugDrift(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(dir)
@@ -110,13 +116,17 @@ func TestAssignEntryHashesForFeed_WordPressSlugDrift(t *testing.T) {
 	}
 	const fh = "wp"
 	first := []Entry{{FeedHash: fh, GUID: "https://blog/?p=1", Link: "https://blog/istorii/x", Title: "Same"}}
-	s.AssignEntryHashesForFeed(fh, first)
+	if err := s.AssignEntryHashesForFeed(fh, first); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.AppendEntries(fh, first); err != nil {
 		t.Fatal(err)
 	}
-	// Same article, link drifted to /novini.
+	// Same article, link drifted to /novini — a SEPARATE poll batch.
 	drift := []Entry{{FeedHash: fh, GUID: "https://blog/?p=1", Link: "https://blog/novini/x", Title: "Same"}}
-	s.AssignEntryHashesForFeed(fh, drift)
+	if err := s.AssignEntryHashesForFeed(fh, drift); err != nil {
+		t.Fatal(err)
+	}
 	if drift[0].Hash != first[0].Hash {
 		t.Fatalf("slug-drift twin must collapse: %s vs %s", drift[0].Hash, first[0].Hash)
 	}
@@ -130,9 +140,9 @@ func TestAssignEntryHashesForFeed_WordPressSlugDrift(t *testing.T) {
 }
 
 // TestAssignEntryHashesForFeed_SharedGUIDDistinct is case 3: genuinely-distinct
-// articles that share one guid (differing titles, CBC-style) must stay distinct
-// under the union verdict (D4). Here the sibling is only on disk, not in the
-// batch — the whole point of folding in existing entries.
+// articles that share one guid (CBC-style) co-occur in a single feed fetch, so
+// the guid is marked sticky (D4) and they stay distinct — and STAY distinct on
+// later solo polls because the sticky mark persists.
 func TestAssignEntryHashesForFeed_SharedGUIDDistinct(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(dir)
@@ -140,32 +150,45 @@ func TestAssignEntryHashesForFeed_SharedGUIDDistinct(t *testing.T) {
 		t.Fatal(err)
 	}
 	const fh = "cbc"
-	seed := []Entry{{FeedHash: fh, GUID: "shared", Link: "https://cbc/a", Title: "Article A"}}
-	s.AssignEntryHashesForFeed(fh, seed)
-	if _, err := s.AppendEntries(fh, seed); err != nil {
+	// Both distinct articles reuse guid "shared" in ONE batch → sticky.
+	batch := []Entry{
+		{FeedHash: fh, GUID: "shared", Link: "https://cbc/a", Title: "Article A"},
+		{FeedHash: fh, GUID: "shared", Link: "https://cbc/b", Title: "Article B"},
+	}
+	if err := s.AssignEntryHashesForFeed(fh, batch); err != nil {
 		t.Fatal(err)
 	}
-	// A DISTINCT article reusing the same guid arrives; with only itself in
-	// the batch the verdict would be D1 and could collide, but the on-disk
-	// sibling (distinct title) makes "shared" reused → D4 → distinct hash.
-	next := []Entry{{FeedHash: fh, GUID: "shared", Link: "https://cbc/b", Title: "Article B"}}
-	s.AssignEntryHashesForFeed(fh, next)
-	if next[0].Hash == seed[0].Hash {
+	if batch[0].Hash == batch[1].Hash {
 		t.Fatal("distinct shared-guid articles must not collapse")
 	}
-	added, err := s.AppendEntries(fh, next)
+	added, err := s.AppendEntries(fh, batch)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(added) != 1 {
-		t.Fatalf("distinct article must be stored (%d added)", len(added))
+	if len(added) != 2 {
+		t.Fatalf("both distinct articles must be stored (%d added)", len(added))
+	}
+	// A later poll listing only Article A: the persisted sticky mark keeps it
+	// at D4, matching the on-disk hash, so nothing re-stores.
+	solo := []Entry{{FeedHash: fh, GUID: "shared", Link: "https://cbc/a", Title: "Article A"}}
+	if err := s.AssignEntryHashesForFeed(fh, solo); err != nil {
+		t.Fatal(err)
+	}
+	if solo[0].Hash != batch[0].Hash {
+		t.Fatalf("sticky mark must persist: %s vs %s", solo[0].Hash, batch[0].Hash)
+	}
+	added, err = s.AppendEntries(fh, solo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(added) != 0 {
+		t.Fatalf("solo re-poll of sticky article must not re-store (%d added)", len(added))
 	}
 }
 
-// TestAssignEntryHashesForFeed_NoExistingHashChange is case 4: the union
-// verdict must not alter the hash a guid-only (never-reused) item already has
-// on disk. Prove the feed-aware path yields the same hash as the plain
-// batch-only path when there is no reuse anywhere.
+// TestAssignEntryHashesForFeed_NoExistingHashChange is case 4: a never-reused
+// guid-only item gets the plain guid-only EntryHash (D1) — the sticky path must
+// not alter it.
 func TestAssignEntryHashesForFeed_NoExistingHashChange(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(dir)
@@ -175,7 +198,9 @@ func TestAssignEntryHashesForFeed_NoExistingHashChange(t *testing.T) {
 	const fh = "plain"
 	e := []Entry{{FeedHash: fh, GUID: "g-unique", Link: "https://x/1", Title: "Solo"}}
 	want := EntryHash("g-unique", "https://x/1", "Solo", time.Time{})
-	s.AssignEntryHashesForFeed(fh, e)
+	if err := s.AssignEntryHashesForFeed(fh, e); err != nil {
+		t.Fatal(err)
+	}
 	if e[0].Hash != want {
 		t.Fatalf("no-reuse feed-aware hash must equal guid-only EntryHash: %s vs %s", e[0].Hash, want)
 	}

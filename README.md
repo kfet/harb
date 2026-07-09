@@ -37,7 +37,7 @@ compatible API. Plain-text storage on disk, no SQL, stdlib-mostly Go.
   user overrides at `<data-dir>/overrides/templates/*.html` and
   `<data-dir>/overrides/theme.css`.
 - Single static binary; subcommands `serve`, `import`, `poll-once`,
-  `hashpass`, `version`.
+  `migrate`, `hashpass`, `version`.
 
 ## Install
 
@@ -93,6 +93,23 @@ go build -o harb ./cmd/harb
 # serve (HTTP API + UI on :8088)
 ./harb serve
 ```
+
+### Upgrading entry identity (v0.19.0)
+
+v0.19.0 changes how entries are de-duplicated (a persistent per-feed
+"sticky reuse set"; see `docs/feed-identity.md`). A one-time migration
+recomputes stored hashes and collapses old duplicates. **Preview it on a
+copy of your data dir first:**
+
+```bash
+./harb migrate --identity --dry-run           # report only, writes nothing
+./harb migrate --identity --dry-run --map-out /tmp/idmap.json
+./harb migrate --identity                      # apply (idempotent, runs once)
+```
+
+The dry-run prints every collapse group and sticky-set marking plus an
+old→new hash map. The real run is version-gated (a second run is a
+no-op) and remaps read/starred state in place.
 
 Then point a FreshRSS-compatible client at `http://your-host:8088/` —
 log in with the username (default `admin`) and the password printed by

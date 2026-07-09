@@ -727,9 +727,9 @@ func TestOpenMigratesLegacyEntryHashesOnDisk(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacy := "abcdef0123456789beef"
-	// Identity now derives from the guid alone (D1); the legacy stored hash
-	// is replaced by the recomputed guid-only id on migration.
-	canon := EntryHash("g", "https://example.com/1", "one", time.Unix(1, 0))
+	// Open canonicalises hash FORMAT only: legacy 20-char → masked 16-char.
+	// Identity recompute (guid→D1) is the gated MigrateIdentity, not Open.
+	canon := StoreEntryHash(legacy)
 	entries := []Entry{{Hash: legacy, FeedHash: fh, GUID: "g", Link: "https://example.com/1", Title: "one", Published: time.Unix(1, 0), FetchedAt: time.Unix(2, 0)}}
 	var b strings.Builder
 	for _, e := range entries {
@@ -905,10 +905,9 @@ func TestOpenDedupsHighBitHashDuplicates(t *testing.T) {
 	}
 	unmasked := "efffa66a7f27865f" // top bit set (pre-mask)
 	masked := "6fffa66a7f27865f"   // same item, masked re-poll
-	// Identity is now recomputed from the guid (D1), so both lines collapse
-	// to the guid-only id regardless of the stored hash's high bit. The
-	// StoreEntryHash fixture checks below still document the masking rule.
-	id := EntryHash("g", "https://example.com/dup/1", "dup", time.Unix(1, 0))
+	// Open canonicalises hash FORMAT only, so the two lines collapse to the
+	// masked canonical hash (identity recompute is the gated MigrateIdentity).
+	id := masked
 	if CanonicalEntryHash(unmasked) == masked {
 		t.Fatalf("fixture: CanonicalEntryHash must be length-only, got %s", CanonicalEntryHash(unmasked))
 	}
@@ -1045,6 +1044,14 @@ func TestOpenDedupsVolatileGUID(t *testing.T) {
 		t.Fatal(err)
 	}
 	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Volatile-guid collapse is the gated identity migration, not Open.
+	if _, err := MigrateIdentity(dir, false); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}

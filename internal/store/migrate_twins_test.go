@@ -56,6 +56,15 @@ func TestMigrateCollapsesSlugEditedTwins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Identity collapse is the explicit, version-gated migration (not Open).
+	if _, err := MigrateIdentity(dir, false); err != nil {
+		t.Fatal(err)
+	}
+	// Re-open so the folded state + index reflect the migrated data.
+	s, err = Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	listed, err := s.ListEntries(fh)
 	if err != nil {
 		t.Fatal(err)

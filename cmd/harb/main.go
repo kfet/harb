@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -64,6 +65,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdImport(rest, stdout, stderr)
 	case "poll-once":
 		return cmdPollOnce(rest, stdout, stderr)
+	case "migrate":
+		return cmdMigrate(rest, stdout, stderr)
 	case "hashpass":
 		return cmdHashpass(rest, stdout, stderr)
 	case "passwd":
@@ -87,6 +90,7 @@ usage:
   harb serve     [-data DIR] [-config FILE]
   harb import    [-data DIR] OPMLFILE
   harb poll-once [-data DIR]
+  harb migrate   --identity [--dry-run] [-data DIR]
   harb hashpass  PASSWORD
   harb passwd    [-data DIR] [-password NEW]
   harb update    [-check] [-version vX.Y.Z]
@@ -353,6 +357,75 @@ func cmdPollOnce(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "total new entries: %d\n", total)
 	return 0
+}
+
+// cmdMigrate runs the one-time entry-identity migration (sticky reuse-set
+// model). --dry-run computes and prints the full human-reviewable report —
+// every collapse group, every sticky marking, and an old→new hash map artifact
+// — WITHOUT touching any data. Without --dry-run it performs the real,
+// version-gated migration (idempotent: a second run is a no-op).
+func cmdMigrate(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("migrate", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dataPtr, _ := commonFlags(fs)
+	identity := fs.Bool("identity", false, "run the entry-identity (sticky reuse-set) migration")
+	dryRun := fs.Bool("dry-run", false, "compute and print the report without modifying data")
+	mapPath := fs.String("map-out", "", "also write the old→new hash map JSON to this path")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if !*identity {
+		fmt.Fprintln(stderr, "migrate: pass --identity to select the identity migration")
+		return 2
+	}
+	data := *dataPtr
+	rep, err := store.MigrateIdentity(data, *dryRun)
+	if err != nil {
+		fmt.Fprintln(stderr, "migrate:", err)
+		return 1
+	}
+	if err := printMigrationReport(stdout, rep); err != nil {
+		fmt.Fprintln(stderr, "migrate: report:", err)
+		return 1
+	}
+	if *mapPath != "" {
+		data, err := json.MarshalIndent(rep.HashRemap, "", "  ")
+		if err != nil {
+			fmt.Fprintln(stderr, "migrate: map:", err)
+			return 1
+		}
+		if err := os.WriteFile(*mapPath, append(data, '\n'), 0o644); err != nil {
+			fmt.Fprintln(stderr, "migrate: map:", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "\nold→new hash map written to %s (%d entries)\n", *mapPath, len(rep.HashRemap))
+	}
+	return 0
+}
+
+// printMigrationReport renders the migration report as a full JSON document
+// (stable, machine- and human-reviewable) plus a one-line human summary.
+func printMigrationReport(stdout io.Writer, rep *store.IdentityReport) error {
+	if rep.Skipped {
+		fmt.Fprintf(stdout, "identity migration already applied (version %s) — no-op\n", rep.Version)
+		return nil
+	}
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(rep); err != nil {
+		return err
+	}
+	mode := "APPLIED"
+	if rep.DryRun {
+		mode = "DRY-RUN (no data modified)"
+	}
+	t := rep.Totals
+	fmt.Fprintf(stdout,
+		"\n%s: %d entries → %d survivors (%d intended collapses), %d sticky markings; "+
+			"read=%d→%d starred=%d→%d\n",
+		mode, t.OldHashCount, t.SurvivorCount, t.IntendedCollapses, t.StickyMarkings,
+		t.ReadBefore, t.ReadAfter, t.StarBefore, t.StarAfter)
+	return nil
 }
 
 // genPassword returns a 16-char URL-safe random password.

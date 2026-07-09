@@ -235,11 +235,15 @@ func (p *Poller) Poll(ctx context.Context, feedURL string) (int, error) {
 		}
 		entries = append(entries, e)
 	}
-	// Assign identities using the union of this feed's on-disk entries and
-	// the poll batch, so the D4 guid-reuse guard is batch-independent: an
-	// item's identity basis cannot flip D4→D1 when a same-guid title sibling
-	// scrolls out of the feed window (see AssignEntryHashesForFeed).
-	p.Store.AssignEntryHashesForFeed(fh, entries)
+	// Assign identities from the feed's persistent sticky reuse set: D1
+	// (guid-only) for every guid, except guids that have ever co-occurred
+	// within a single fetch batch, which route to D4 (link mixed in) forever.
+	// The hash is a pure function of (entry fields, sticky set) — batch
+	// composition only ever grows the sticky set, never flips an item's basis
+	// (see AssignEntryHashesForFeed).
+	if err := p.Store.AssignEntryHashesForFeed(fh, entries); err != nil {
+		return 0, p.recordErr(fh, &st, err)
+	}
 
 	// Webflow article-text enrichment: when this feed was synthesised from
 	// a Webflow page (the resolver stamps a generator marker), fetch each

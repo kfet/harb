@@ -59,9 +59,10 @@ func TestIndexBuildAndLookup(t *testing.T) {
 	if len(s.IndexedEntries("nope")) != 0 {
 		t.Fatal("expected empty slice for unknown feed")
 	}
-	// EntryByHash hit + miss. The seeded hashes are recomputed to the
-	// guid-only identity on migration, so look up by that id.
-	idG := EntryHash("g", "", "", time.Time{})
+	// EntryByHash hit + miss. Open now canonicalises hash FORMAT only
+	// (identity recompute is the gated MigrateIdentity), so the seeded
+	// record is found under the masked-canonical form of its stored hash.
+	idG := StoreEntryHash("deadbeef00000000")
 	if e, ok := s.EntryByHash(idG); !ok || e.GUID != "g" {
 		t.Fatalf("byHash hit=%v entry=%+v", ok, e)
 	}

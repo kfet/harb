@@ -1018,3 +1018,33 @@ func TestPollSSRFBlocksLoopback(t *testing.T) {
 		t.Fatalf("expected non-public block error, got: %v", err)
 	}
 }
+
+// TestPollAssignHashError covers the poll's error arm when identity assignment
+// fails: a corrupt per-feed sticky reuse-set sidecar makes
+// AssignEntryHashesForFeed return an error, which the poll must surface (and
+// record as a feed error) rather than storing entries under wrong ids.
+func TestPollAssignHashError(t *testing.T) {
+	p, _, dir := newPoller(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/rss+xml")
+		io.WriteString(w, sampleRSS)
+	}))
+	defer srv.Close()
+	fh := store.FeedHash(srv.URL)
+	entDir := filepath.Join(dir, "entries", fh)
+	if err := os.MkdirAll(entDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Corrupt sticky sidecar → loadStickyGUIDs (inside AssignEntryHashesForFeed)
+	// fails.
+	if err := os.WriteFile(filepath.Join(entDir, "reused-guids.json"), []byte("{bad"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Poll(context.Background(), srv.URL); err == nil {
+		t.Fatal("expected poll error from corrupt sticky sidecar")
+	}
+	st, _ := p.Store.LoadFeedState(fh)
+	if st.ErrorCount == 0 {
+		t.Fatal("poll must record the assignment failure as a feed error")
+	}
+}
