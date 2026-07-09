@@ -426,6 +426,26 @@ func (s *Store) compactLocked(path string, kind byte) error {
 	return nil
 }
 
+// AssignEntryHashesForFeed sets .Hash on every entry in the incoming batch,
+// applying the D4 guid-reuse guard with a verdict computed over the UNION of
+// the feed's existing stored entries (s.idx[feedHash]) and the batch. Unlike
+// the pure store.AssignEntryHashes (batch-only), this makes the D1-vs-D4
+// identity basis batch-independent: once a normalised guid carries two
+// distinct-title entries on disk the reused verdict holds permanently, so an
+// item's hash cannot flip D4→D1 when a same-guid title sibling scrolls out of
+// the feed window (the re-dup bug). It changes no existing on-disk hash — only
+// which basis a NEW entry is stored under. Poll callers use this in place of
+// AssignEntryHashes; the snapshot is taken under the same read lock discipline
+// as indexedHashes and released before any file I/O.
+func (s *Store) AssignEntryHashesForFeed(feedHash string, entries []Entry) {
+	s.mu.RLock()
+	existing := s.idx[feedHash]
+	snap := make([]Entry, len(existing))
+	copy(snap, existing)
+	s.mu.RUnlock()
+	assignWithReused(entries, reusedGUIDsUnion(snap, entries))
+}
+
 // AppendEntries appends entries to feed's current.ndjson. Returns the
 // subset that was actually new (de-duplicated by entry hash within the
 // feed against the in-memory index — no per-poll disk scan).

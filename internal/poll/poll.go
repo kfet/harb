@@ -235,9 +235,11 @@ func (p *Poller) Poll(ctx context.Context, feedURL string) (int, error) {
 		}
 		entries = append(entries, e)
 	}
-	// Assign identities for the whole batch so the D4 guid-reuse guard can
-	// see repeated guids across the poll's items (see AssignEntryHashes).
-	store.AssignEntryHashes(entries)
+	// Assign identities using the union of this feed's on-disk entries and
+	// the poll batch, so the D4 guid-reuse guard is batch-independent: an
+	// item's identity basis cannot flip D4→D1 when a same-guid title sibling
+	// scrolls out of the feed window (see AssignEntryHashesForFeed).
+	p.Store.AssignEntryHashesForFeed(fh, entries)
 
 	// Webflow article-text enrichment: when this feed was synthesised from
 	// a Webflow page (the resolver stamps a generator marker), fetch each

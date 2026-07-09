@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-07-09
+
+### Fixed
+
+- **Guid-reuse feeds no longer re-duplicate an article when a same-guid
+  title sibling scrolls out of the feed window.** The guid-reuse guard
+  (which mixes `<link>` back into the identity for feeds that reuse one
+  `<guid>` across distinct items) computed its "is this guid reused?"
+  verdict over the **poll batch alone**. When two items sharing a guid
+  but carrying different titles were both in-window, the guid read as
+  reused; once one title aged out of the feed, the survivor's identity
+  basis silently flipped, changing its hash and re-storing the same
+  article as **new** (and fragmenting its read/starred state). The
+  Nintendo World Report feed hit this: `news/75967` "Star Fox Gets Free
+  Demo" re-duplicated a month after first ingest. Poll-time hashing now
+  computes the reuse verdict over the **union of the feed's existing
+  on-disk entries and the incoming batch**, making the verdict monotone
+  and batch-independent. No on-disk hashes change and no migration is
+  needed — see [docs/feed-identity.md](docs/feed-identity.md).
+
+
 ## [0.17.1] - 2026-06-22
 
 ### Fixed

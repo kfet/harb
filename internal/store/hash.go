@@ -128,35 +128,61 @@ func entryHashKey(guid, link, title string, published time.Time, guidReused bool
 // title is the same article re-served (link drift or a re-poll) and is NOT
 // treated as reuse.
 func reusedGUIDs(entries []Entry) map[string]bool {
+	return reusedGUIDsUnion(nil, entries)
+}
+
+// reusedGUIDsUnion computes the reuse verdict over the union of a feed's
+// EXISTING stored entries and an incoming batch. The verdict is monotone in
+// the existing set: once a normalised guid carries two distinct-title entries
+// on disk it is reused permanently, regardless of which siblings happen to be
+// in the current poll window.
+//
+// This batch-independence is the fix for the guid-reuse re-dup: a per-batch
+// verdict (existing == nil) flips an item's identity basis D4→D1 the moment a
+// same-guid title sibling scrolls out of the feed window, changing its hash
+// and re-storing the article as new (the NWR "Star Fox" case). Seeding the
+// first-seen map from disk pins the basis. Existing on-disk hashes are NOT
+// affected — this only decides which basis a NEW entry is stored under.
+func reusedGUIDsUnion(existing, batch []Entry) map[string]bool {
 	first := map[string]string{} // guid -> first-seen title
 	reused := map[string]bool{}
-	for _, e := range entries {
-		g := NormalizeGUID(strings.TrimSpace(e.GUID))
-		if g == "" {
-			continue
-		}
-		if prev, ok := first[g]; ok {
-			if prev != e.Title {
-				reused[g] = true
+	mark := func(entries []Entry) {
+		for _, e := range entries {
+			g := NormalizeGUID(strings.TrimSpace(e.GUID))
+			if g == "" {
+				continue
 			}
-		} else {
-			first[g] = e.Title
+			if prev, ok := first[g]; ok {
+				if prev != e.Title {
+					reused[g] = true
+				}
+			} else {
+				first[g] = e.Title
+			}
 		}
 	}
+	mark(existing)
+	mark(batch)
 	return reused
 }
 
-// AssignEntryHashes sets .Hash on every entry in the batch, applying the D4
-// guid-reuse guard across the whole batch. Use this for poll and migration
-// batches; EntryHash is the per-entry form without the guard.
-func AssignEntryHashes(entries []Entry) {
-	reused := reusedGUIDs(entries)
+// assignWithReused sets .Hash on every entry using a precomputed reuse set.
+func assignWithReused(entries []Entry, reused map[string]bool) {
 	for i := range entries {
 		g := NormalizeGUID(strings.TrimSpace(entries[i].GUID))
 		entries[i].Hash = entryHashKey(
 			entries[i].GUID, entries[i].Link, entries[i].Title,
 			entries[i].Published, g != "" && reused[g])
 	}
+}
+
+// AssignEntryHashes sets .Hash on every entry in the batch, applying the D4
+// guid-reuse guard across the whole batch. Use this for migration batches and
+// callers without a feed context; EntryHash is the per-entry form without the
+// guard. Poll callers should prefer Store.AssignEntryHashesForFeed, which makes
+// the D1/D4 basis batch-independent by folding in the feed's on-disk entries.
+func AssignEntryHashes(entries []Entry) {
+	assignWithReused(entries, reusedGUIDs(entries))
 }
 
 // trailingRFC1123 matches a single RFC 1123 date-time anchored at the end

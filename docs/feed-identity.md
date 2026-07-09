@@ -69,6 +69,33 @@ cost is that an article whose publisher edits **both** its title and its slug is
 kept as two entries (can't be distinguished from genuine guid-reuse) — erring
 toward keeping distinct never loses data.
 
+#### Batch-independence guarantee
+The reuse verdict must be **stable across polls**, not a function of which items
+happen to share the current feed window. A verdict computed over the poll batch
+alone flips an item's basis the moment a same-guid title sibling scrolls out of
+the feed: a guid that read as *reused* (link mixed in, D4) while both titles were
+in-window silently reverts to *not-reused* (guid-only, D1) once the sibling ages
+out, changing the hash and re-storing the same article as new. This bit the
+Nintendo World Report feed, which re-duplicated `news/75967` ("Star Fox Gets
+Free Demo") a month after first ingest when its typo-titled sibling left the
+window.
+
+So at **poll time** harb computes the verdict over the **union of the feed's
+existing stored entries and the incoming batch** (`Store.AssignEntryHashesForFeed`),
+seeding the first-seen title map from `s.idx[feedHash]` before folding in the
+batch. The verdict is then **monotone**: once a guid carries two distinct-title
+entries on disk it stays reused permanently, so an item's identity basis never
+flips with window composition. This changes **no existing on-disk hash** and
+needs no migration — it only pins which basis a *new* entry is stored under. The
+pure batch-only `AssignEntryHashes` is retained for migration and callers without
+a feed context.
+
+The one residual case: if a same-guid title variant appears *after* the original
+was already stored solo, the original's first poll (which had no sibling on disk
+or in batch) may still produce a single duplicate at the instant the second title
+first arrives. That is pre-existing and accepted — solving it via a link/title
+basis would regress slug-drift collapse (above).
+
 
 ## Safe vs unsafe normalization
 
