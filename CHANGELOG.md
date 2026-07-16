@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **GReader API 401 responses now carry `X-Reader-Google-Bad-Token:
+  true`.** When an API token expires (30-day lifetime), the
+  `requireAuth`-protected Reader endpoints return this de-facto GReader
+  convention header alongside the 401. Clients (Reeder et al.) key off
+  it to silently re-run `ClientLogin` with stored credentials rather
+  than prompting the user to log in again, making token expiry
+  invisible to the UX.
+
 ## [0.19.0] - 2026-07-09
 
 ### Fixed

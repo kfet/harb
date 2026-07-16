@@ -1653,3 +1653,25 @@ func TestETagOPMLOnEmpty(t *testing.T) {
 		t.Error("empty OPML should still yield an ETag")
 	}
 }
+
+func TestRequireAuthBadTokenHeader(t *testing.T) {
+	_, mux, tok, _, _ := fixture(t)
+
+	// Invalid/missing token → 401 with the bad-token header set.
+	w := do(t, mux, "GET", "/reader/api/0/user-info", "bogus", nil)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("code=%d, want 401", w.Code)
+	}
+	if got := w.Header().Get("X-Reader-Google-Bad-Token"); got != "true" {
+		t.Fatalf("X-Reader-Google-Bad-Token=%q, want %q", got, "true")
+	}
+
+	// Valid token → no bad-token header.
+	w = do(t, mux, "GET", "/reader/api/0/user-info", tok, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d, want 200", w.Code)
+	}
+	if got := w.Header().Get("X-Reader-Google-Bad-Token"); got != "" {
+		t.Fatalf("valid token carried X-Reader-Google-Bad-Token=%q, want empty", got)
+	}
+}
