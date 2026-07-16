@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/kfet/harb/internal/store"
@@ -30,10 +31,21 @@ func postPage(path string) string {
 // a second poll appends nothing new and re-fetches no detail pages.
 func TestPollWebflowEnrichesNewEntriesOnly(t *testing.T) {
 	p, st, _ := newPoller(t)
+	var hitsMu sync.Mutex
 	postHits := map[string]int{}
+	hit := func(path string) {
+		hitsMu.Lock()
+		postHits[path]++
+		hitsMu.Unlock()
+	}
+	hitsOf := func(path string) int {
+		hitsMu.Lock()
+		defer hitsMu.Unlock()
+		return postHits[path]
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/p/", func(w http.ResponseWriter, r *http.Request) {
-		postHits[r.URL.Path]++
+		hit(r.URL.Path)
 		w.Header().Set("Content-Type", "text/html")
 		io.WriteString(w, postPage(r.URL.Path))
 	})
@@ -66,7 +78,7 @@ func TestPollWebflowEnrichesNewEntriesOnly(t *testing.T) {
 			t.Errorf("entry %q has zero publish date", e.Link)
 		}
 	}
-	if postHits["/p/1"] != 1 || postHits["/p/2"] != 1 {
+	if hitsOf("/p/1") != 1 || hitsOf("/p/2") != 1 {
 		t.Fatalf("first poll detail hits=%v, want each 1", postHits)
 	}
 
@@ -74,7 +86,7 @@ func TestPollWebflowEnrichesNewEntriesOnly(t *testing.T) {
 	if _, err := p.Poll(context.Background(), srv.URL); err != nil {
 		t.Fatal(err)
 	}
-	if postHits["/p/1"] != 1 || postHits["/p/2"] != 1 {
+	if hitsOf("/p/1") != 1 || hitsOf("/p/2") != 1 {
 		t.Fatalf("second poll re-fetched detail pages: hits=%v", postHits)
 	}
 }
