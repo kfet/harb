@@ -105,7 +105,7 @@ func (s *Server) requireAuth(h http.HandlerFunc) http.HandlerFunc {
 		_ = r.ParseForm()
 		tok := auth.ExtractAPIToken(r)
 		if !s.Auth.CheckAPIToken(tok) {
-			w.Header().Set("X-Reader-Google-Bad-Token", "true")
+			w.Header().Set("Google-Bad-Token", "true")
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}

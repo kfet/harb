@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **GReader API tokens are now deterministic and non-expiring**
+  (miniflux/FreshRSS model). The `Auth` token is derived via
+  HMAC-SHA256 from the stored password hash and username
+  (`username/<hmac-hex>`), so it is stable across restarts, secret,
+  and rotates automatically when the password changes. Tokens are no
+  longer minted randomly, persisted, or expired, which keeps clients
+  (Reeder et al.) signed in indefinitely instead of prompting to
+  re-authorize every 30 days. Legacy random tokens already on disk in
+  `tokens.json` stay valid — without expiry — until the next password
+  change, so upgrading causes zero re-auth prompts. A password change
+  clears legacy API tokens and rotates the deterministic one. UI
+  cookie sessions are unchanged (still random, persisted, 30-day
+  expiry).
+
+### Fixed
+
+- **GReader API 401 responses now use the real-world FreshRSS header
+  name `Google-Bad-Token: true`** (was the ineffective
+  `X-Reader-Google-Bad-Token` shipped in v0.19.1, which no client
+  recognises).
+
 ## [0.19.1] - 2026-07-16
 
 ### Fixed

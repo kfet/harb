@@ -9,11 +9,20 @@
 //     T=<token> as a write-token after a `/reader/api/0/token` call).
 //   - Web UI: a standard cookie session set on POST /ui/login.
 //
-// Tokens are random opaque strings (32 bytes, hex-encoded). They are
-// persisted to tokens.json so they survive restarts.
+// The Reader-API token is deterministic and non-expiring: it is derived
+// (HMAC-SHA256) from the stored PasswordHash and username, so it is stable
+// across restarts, secret, and rotates automatically when the password
+// changes. It is never minted randomly or persisted, mirroring the
+// miniflux/FreshRSS model that keeps clients like Reeder logged in
+// indefinitely. Legacy random API tokens already on disk in tokens.json
+// remain valid (without expiry) until the next password change, so an
+// upgrade causes no re-authentication. Web-UI sessions, by contrast, are
+// still random opaque strings (32 bytes, hex-encoded), persisted to
+// tokens.json, and expire after TokenLifetime.
 package auth
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -150,19 +159,15 @@ func OpenStore(path string, cfg Config) (*Store, error) {
 	return s, nil
 }
 
-// sweepLocked deletes every API token and session whose age has reached
-// TokenLifetime. Caller must hold s.mu. Returns the number of entries
-// removed. Cheap (a single pass over two small maps) so it is safe to
-// run on every issue as well as at open.
+// sweepLocked deletes every session whose age has reached TokenLifetime.
+// Caller must hold s.mu. Returns the number of entries removed. Cheap (a
+// single pass over the sessions map) so it is safe to run on every issue
+// as well as at open. API tokens are intentionally not swept: the
+// deterministic token never expires, and legacy random tokens loaded from
+// disk stay valid until the next password change.
 func (s *Store) sweepLocked() int {
 	now := s.now()
 	removed := 0
-	for tok, issued := range s.api {
-		if now.Sub(issued) >= TokenLifetime {
-			delete(s.api, tok)
-			removed++
-		}
-	}
 	for tok, issued := range s.sessions {
 		if now.Sub(issued) >= TokenLifetime {
 			delete(s.sessions, tok)
@@ -175,28 +180,37 @@ func (s *Store) sweepLocked() int {
 // CookieName is the HTTP cookie name for the UI session.
 const CookieName = "harb_session"
 
-// TokenLifetime governs how long tokens are valid. v0.1: 30 days.
+// TokenLifetime governs how long UI sessions are valid. v0.1: 30 days.
+// (API tokens no longer expire; this constant is session-only now.)
 const TokenLifetime = 30 * 24 * time.Hour
 
-// IssueAPIToken authenticates and returns a new opaque token. The token
-// is also persisted to disk so it survives restarts.
+// apiToken returns the deterministic, non-expiring Reader-API token for the
+// configured single user. It is an HMAC-SHA256 over a fixed label plus the
+// username, keyed by the (secret, salt-embedding) PasswordHash, so it is
+// stable across restarts and rotates automatically when the password
+// changes. The username prefix mirrors miniflux/FreshRSS and survives
+// ExtractAPIToken (a "/" in the value is preserved).
+func (s *Store) apiToken() string {
+	s.mu.RLock()
+	cfg := s.Cfg
+	s.mu.RUnlock()
+	return apiTokenFor(cfg)
+}
+
+func apiTokenFor(cfg Config) string {
+	mac := hmac.New(sha256.New, []byte(cfg.PasswordHash))
+	mac.Write([]byte("harb-greader-api-token:" + cfg.Username))
+	return cfg.Username + "/" + hex.EncodeToString(mac.Sum(nil))
+}
+
+// IssueAPIToken authenticates and returns the deterministic API token.
+// Nothing is minted or persisted: the token is a pure function of the
+// stored credentials, so it survives restarts and never expires.
 func (s *Store) IssueAPIToken(username, password string) (string, error) {
 	if err := s.Verify(username, password); err != nil {
 		return "", err
 	}
-	tok, err := newToken()
-	if err != nil {
-		return "", err
-	}
-	s.mu.Lock()
-	s.sweepLocked()
-	s.api[tok] = s.now().UTC()
-	err = s.persistLocked()
-	s.mu.Unlock()
-	if err != nil {
-		return "", err
-	}
-	return tok, nil
+	return s.apiToken(), nil
 }
 
 // IssueSession authenticates and returns a new opaque session cookie value.
@@ -227,18 +241,21 @@ func (s *Store) NewSession() (string, error) {
 	return tok, nil
 }
 
-// CheckAPIToken returns true if token is valid (exists + not expired).
+// CheckAPIToken reports whether tok is a valid Reader-API token. The
+// deterministic token is compared in constant time. Legacy random tokens
+// still present in the on-disk map (from before the deterministic model)
+// are also accepted, without expiry, until the next password change.
 func (s *Store) CheckAPIToken(tok string) bool {
 	if tok == "" {
 		return false
 	}
-	s.mu.RLock()
-	issued, ok := s.api[tok]
-	s.mu.RUnlock()
-	if !ok {
-		return false
+	if subtle.ConstantTimeCompare([]byte(tok), []byte(s.apiToken())) == 1 {
+		return true
 	}
-	return s.now().Sub(issued) < TokenLifetime
+	s.mu.RLock()
+	_, ok := s.api[tok]
+	s.mu.RUnlock()
+	return ok
 }
 
 // CheckSession returns true if a session cookie value is valid.
@@ -354,18 +371,25 @@ func (s *Store) Verify(username, password string) error {
 	return cfg.Verify(username, password)
 }
 
-// SetPasswordHash atomically replaces the stored password hash. Callers
-// are responsible for also persisting the new hash to config.json — the
-// auth store has no knowledge of where the Config lives on disk.
-func (s *Store) SetPasswordHash(h string) {
+// SetPasswordHash atomically replaces the stored password hash and
+// invalidates all legacy random API tokens (the deterministic token
+// auto-rotates because it is derived from the hash). The cleared map is
+// persisted so the invalidation survives a restart. Callers are also
+// responsible for persisting the new hash to config.json — the auth store
+// has no knowledge of where the Config lives on disk.
+func (s *Store) SetPasswordHash(h string) error {
 	s.mu.Lock()
 	s.Cfg.PasswordHash = h
+	s.api = map[string]time.Time{}
+	err := s.persistLocked()
 	s.mu.Unlock()
+	return err
 }
 
 // RevokeAllSessions drops every session cookie, forcing all browsers
-// to re-authenticate. Used after a password change. API tokens are
-// kept (clients re-authenticate with the new password lazily).
+// to re-authenticate. Used after a password change. Legacy API tokens
+// are dropped separately by SetPasswordHash; the deterministic API token
+// rotates with the new password hash.
 func (s *Store) RevokeAllSessions() error {
 	s.mu.Lock()
 	s.sessions = map[string]time.Time{}

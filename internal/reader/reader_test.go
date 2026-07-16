@@ -1662,8 +1662,8 @@ func TestRequireAuthBadTokenHeader(t *testing.T) {
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("code=%d, want 401", w.Code)
 	}
-	if got := w.Header().Get("X-Reader-Google-Bad-Token"); got != "true" {
-		t.Fatalf("X-Reader-Google-Bad-Token=%q, want %q", got, "true")
+	if got := w.Header().Get("Google-Bad-Token"); got != "true" {
+		t.Fatalf("Google-Bad-Token=%q, want %q", got, "true")
 	}
 
 	// Valid token → no bad-token header.
@@ -1671,7 +1671,7 @@ func TestRequireAuthBadTokenHeader(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("code=%d, want 200", w.Code)
 	}
-	if got := w.Header().Get("X-Reader-Google-Bad-Token"); got != "" {
-		t.Fatalf("valid token carried X-Reader-Google-Bad-Token=%q, want empty", got)
+	if got := w.Header().Get("Google-Bad-Token"); got != "" {
+		t.Fatalf("valid token carried Google-Bad-Token=%q, want empty", got)
 	}
 }

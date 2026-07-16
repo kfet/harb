@@ -1382,7 +1382,7 @@ func (s *Server) handlePasswd(w http.ResponseWriter, r *http.Request) {
 		s.renderPasswdErr(w, r, "save config: "+err.Error())
 		return
 	}
-	s.Auth.SetPasswordHash(h)
+	_ = s.Auth.SetPasswordHash(h)
 	_ = s.Auth.RevokeAllSessions()
 	auth.ClearSessionCookie(w)
 	RelRedirect(w, r, "../login?passwd=1", http.StatusSeeOther)

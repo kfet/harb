@@ -196,9 +196,8 @@ func TestIssueRandError(t *testing.T) {
 	orig := randRead
 	t.Cleanup(func() { randRead = orig })
 	randRead = func([]byte) (int, error) { return 0, errors.New("rand-boom") }
-	if _, err := s.IssueAPIToken("u", "p"); err == nil {
-		t.Fatal("expected rand error api")
-	}
+	// API tokens are deterministic now (no randomness), so IssueAPIToken
+	// does not depend on randRead. Only sessions do.
 	if _, err := s.IssueSession("u", "p"); err == nil {
 		t.Fatal("expected rand error sess")
 	}
@@ -212,7 +211,7 @@ func TestPersistMarshalAndMkdirFail(t *testing.T) {
 	origJ := jsonMarshalIndent
 	t.Cleanup(func() { jsonMarshalIndent = origJ })
 	jsonMarshalIndent = func(any, string, string) ([]byte, error) { return nil, errors.New("m-boom") }
-	if _, err := s.IssueAPIToken("u", "p"); err == nil {
+	if _, err := s.IssueSession("u", "p"); err == nil {
 		t.Fatal("expected marshal err")
 	}
 	jsonMarshalIndent = origJ
@@ -220,7 +219,7 @@ func TestPersistMarshalAndMkdirFail(t *testing.T) {
 	origM := osMkdirAll
 	t.Cleanup(func() { osMkdirAll = origM })
 	osMkdirAll = func(string, os.FileMode) error { return errors.New("mk-boom") }
-	if _, err := s.IssueAPIToken("u", "p"); err == nil {
+	if _, err := s.IssueSession("u", "p"); err == nil {
 		t.Fatal("expected mkdir err")
 	}
 }
@@ -236,9 +235,8 @@ func TestIssuePersistFail(t *testing.T) {
 	s, _ := OpenStore(filepath.Join(dir, "tokens.json"), cfg)
 	os.Chmod(dir, 0o500)
 	t.Cleanup(func() { os.Chmod(dir, 0o755) })
-	if _, err := s.IssueAPIToken("u", "p"); err == nil {
-		t.Fatal("expected persist err")
-	}
+	// IssueAPIToken no longer persists (deterministic token), so only the
+	// session paths can hit a persist failure.
 	if _, err := s.IssueSession("u", "p"); err == nil {
 		t.Fatal("expected persist err")
 	}
@@ -282,8 +280,9 @@ func TestRevokeAllSessions(t *testing.T) {
 	}
 }
 
-// TestOpenStoreSweepsExpired verifies that tokens/sessions already past
-// TokenLifetime on disk are evicted at open and the file rewritten.
+// TestOpenStoreSweepsExpired verifies that expired SESSIONS on disk are
+// evicted at open and the file rewritten, while legacy API tokens survive
+// regardless of age (they no longer expire).
 func TestOpenStoreSweepsExpired(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "tokens.json")
@@ -304,28 +303,33 @@ func TestOpenStoreSweepsExpired(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.CheckAPIToken("old-api") || s.CheckSession("old-sess") {
-		t.Fatal("expired entries should have been swept")
+	if s.CheckSession("old-sess") {
+		t.Fatal("expired session should have been swept")
 	}
-	if !s.CheckAPIToken("fresh-api") || !s.CheckSession("fresh-sess") {
-		t.Fatal("fresh entries should survive the sweep")
+	if !s.CheckSession("fresh-sess") {
+		t.Fatal("fresh session should survive the sweep")
+	}
+	// Legacy API tokens are non-expiring: both must remain valid.
+	if !s.CheckAPIToken("old-api") || !s.CheckAPIToken("fresh-api") {
+		t.Fatal("legacy API tokens must survive regardless of age")
 	}
 	// The on-disk file must have been rewritten without the expired
-	// entries (reopen and re-check).
+	// session (reopen and re-check) but keep the legacy API tokens.
 	s2, err := OpenStore(path, makeCfg(t, "a", "p"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := s2.api["old-api"]; ok {
-		t.Fatal("expired api token still on disk")
-	}
 	if _, ok := s2.sessions["old-sess"]; ok {
 		t.Fatal("expired session still on disk")
 	}
+	if _, ok := s2.api["old-api"]; !ok {
+		t.Fatal("legacy api token should still be on disk")
+	}
 }
 
-// TestIssueSweepsExpired confirms the opportunistic sweep on issue
-// drops a token that has since expired.
+// TestIssueSweepsExpired confirms the opportunistic sweep on issuing a
+// session drops a session that has since expired, and that legacy API
+// tokens are left untouched (non-expiring).
 func TestIssueSweepsExpired(t *testing.T) {
 	dir := t.TempDir()
 	cfg := makeCfg(t, "a", "p")
@@ -333,32 +337,29 @@ func TestIssueSweepsExpired(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Plant an already-expired token directly.
-	s.api["stale"] = time.Now().UTC().Add(-2 * TokenLifetime)
+	// Plant an already-expired session and a legacy API token directly.
 	s.sessions["stale-sess"] = time.Now().UTC().Add(-2 * TokenLifetime)
-	if _, err := s.IssueAPIToken("a", "p"); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := s.api["stale"]; ok {
-		t.Fatal("issuing an API token should have swept the stale one")
-	}
+	s.api["legacy"] = time.Now().UTC().Add(-2 * TokenLifetime)
 	if _, err := s.IssueSession("a", "p"); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := s.sessions["stale-sess"]; ok {
 		t.Fatal("issuing a session should have swept the stale one")
 	}
+	if _, ok := s.api["legacy"]; !ok {
+		t.Fatal("legacy API token must not be swept")
+	}
 }
 
 // TestOpenStoreSweepPersistError surfaces a persist failure from the
-// open-time sweep.
+// open-time (session) sweep.
 func TestOpenStoreSweepPersistError(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "tokens.json")
 	old := time.Now().UTC().Add(-2 * TokenLifetime)
 	disk := struct {
-		API map[string]time.Time `json:"api"`
-	}{API: map[string]time.Time{"old": old}}
+		Sessions map[string]time.Time `json:"sessions"`
+	}{Sessions: map[string]time.Time{"old": old}}
 	data, _ := json.MarshalIndent(disk, "", "  ")
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
@@ -368,5 +369,164 @@ func TestOpenStoreSweepPersistError(t *testing.T) {
 	jsonMarshalIndent = func(any, string, string) ([]byte, error) { return nil, errors.New("persist-boom") }
 	if _, err := OpenStore(path, makeCfg(t, "a", "p")); err == nil {
 		t.Fatal("expected persist error from open-time sweep")
+	}
+}
+
+// TestAPITokenDeterministic verifies the API token is a pure function of
+// the stored credentials: stable across independent Store loads/restarts,
+// equal to what IssueAPIToken returns, and accepted by CheckAPIToken while
+// garbage is rejected.
+func TestAPITokenDeterministic(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tokens.json")
+	cfg := makeCfg(t, "alice", "hunter2")
+
+	s1, err := OpenStore(path, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := s1.IssueAPIToken("alice", "hunter2")
+	if err != nil || tok == "" {
+		t.Fatalf("issue: %v / %q", err, tok)
+	}
+	// Prefixed with username + "/" (miniflux/FreshRSS shape).
+	if !strings.HasPrefix(tok, "alice/") {
+		t.Fatalf("token %q missing username/ prefix", tok)
+	}
+	// IssueAPIToken must return exactly the deterministic token.
+	if tok != s1.apiToken() {
+		t.Fatalf("IssueAPIToken=%q != apiToken()=%q", tok, s1.apiToken())
+	}
+	if !s1.CheckAPIToken(tok) {
+		t.Fatal("deterministic token should pass CheckAPIToken")
+	}
+	if s1.CheckAPIToken("garbage") || s1.CheckAPIToken("alice/deadbeef") || s1.CheckAPIToken("") {
+		t.Fatal("wrong/garbage tokens must fail CheckAPIToken")
+	}
+
+	// A completely independent Store load (simulating a restart) with the
+	// same config yields the identical token and accepts the earlier one.
+	s2, err := OpenStore(path, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s2.apiToken(); got != tok {
+		t.Fatalf("token not stable across restart: %q != %q", got, tok)
+	}
+	if !s2.CheckAPIToken(tok) {
+		t.Fatal("token from first load rejected after restart")
+	}
+}
+
+// TestIssueAPITokenBadCreds ensures wrong credentials are rejected.
+func TestIssueAPITokenBadCreds(t *testing.T) {
+	s, _ := OpenStore(filepath.Join(t.TempDir(), "tokens.json"), makeCfg(t, "u", "p"))
+	if _, err := s.IssueAPIToken("u", "wrong"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("want ErrInvalidCredentials, got %v", err)
+	}
+	if _, err := s.IssueAPIToken("eve", "p"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("want ErrInvalidCredentials, got %v", err)
+	}
+}
+
+// TestAPITokenNonExpiring verifies the deterministic API token survives an
+// arbitrarily large clock advance, while a UI session issued at the same
+// time still expires at TokenLifetime.
+func TestAPITokenNonExpiring(t *testing.T) {
+	s, _ := OpenStore(filepath.Join(t.TempDir(), "tokens.json"), makeCfg(t, "u", "p"))
+	base := time.Now().UTC()
+	s.now = func() time.Time { return base }
+
+	tok, _ := s.IssueAPIToken("u", "p")
+	sess, _ := s.IssueSession("u", "p")
+	if !s.CheckAPIToken(tok) || !s.CheckSession(sess) {
+		t.Fatal("both should be valid at issue time")
+	}
+
+	// Advance well past TokenLifetime.
+	s.now = func() time.Time { return base.Add(60 * 24 * time.Hour) }
+	if !s.CheckAPIToken(tok) {
+		t.Fatal("API token must NOT expire")
+	}
+	if s.CheckSession(sess) {
+		t.Fatal("UI session MUST still expire at TokenLifetime")
+	}
+}
+
+// TestLegacyAPITokenAcceptedThenClearedOnPasswordChange verifies a legacy
+// random token already on disk is honoured without expiry, and that a
+// password change both invalidates it and rotates the deterministic token.
+func TestLegacyAPITokenAcceptedThenClearedOnPasswordChange(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "tokens.json")
+	cfg := makeCfg(t, "u", "p")
+	s, err := OpenStore(path, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Pre-seed a legacy random token with an ancient issued-at.
+	legacy := "legacy-random-token"
+	s.api[legacy] = time.Now().UTC().Add(-10 * TokenLifetime)
+	if !s.CheckAPIToken(legacy) {
+		t.Fatal("legacy token should be accepted without expiry")
+	}
+
+	before := s.apiToken()
+
+	// Change the password: legacy tokens die, deterministic token rotates.
+	newHash, err := HashPassword("newpass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPasswordHash(newHash); err != nil {
+		t.Fatal(err)
+	}
+	if s.CheckAPIToken(legacy) {
+		t.Fatal("legacy token must be cleared after password change")
+	}
+	after := s.apiToken()
+	if before == after {
+		t.Fatal("deterministic token must rotate on password change")
+	}
+	if !s.CheckAPIToken(after) {
+		t.Fatal("new deterministic token should be valid")
+	}
+	// The cleared map must have been persisted.
+	s2, err := OpenStore(path, Config{Username: "u", PasswordHash: newHash})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s2.CheckAPIToken(legacy) {
+		t.Fatal("legacy token must not survive on disk after password change")
+	}
+}
+
+// TestSetPasswordHashPersistError covers the persist-failure path of
+// SetPasswordHash.
+func TestSetPasswordHashPersistError(t *testing.T) {
+	s, _ := OpenStore(filepath.Join(t.TempDir(), "tokens.json"), makeCfg(t, "u", "p"))
+	origJ := jsonMarshalIndent
+	t.Cleanup(func() { jsonMarshalIndent = origJ })
+	jsonMarshalIndent = func(any, string, string) ([]byte, error) { return nil, errors.New("persist-boom") }
+	if err := s.SetPasswordHash("sha256$00$00"); err == nil {
+		t.Fatal("expected persist error from SetPasswordHash")
+	}
+}
+
+// TestDeterministicTokenSurvivesExtraction confirms the username/"..." token
+// (containing a "/") round-trips through ExtractAPIToken via the GoogleLogin
+// Authorization header and the T= form field.
+func TestDeterministicTokenSurvivesExtraction(t *testing.T) {
+	s, _ := OpenStore(filepath.Join(t.TempDir(), "tokens.json"), makeCfg(t, "u", "p"))
+	tok, _ := s.IssueAPIToken("u", "p")
+
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Set("Authorization", "GoogleLogin auth="+tok)
+	if got := ExtractAPIToken(r); got != tok {
+		t.Fatalf("auth header: got %q want %q", got, tok)
+	}
+	r2 := httptest.NewRequest("GET", "/?T="+tok, nil)
+	if got := ExtractAPIToken(r2); got != tok {
+		t.Fatalf("T form: got %q want %q", got, tok)
 	}
 }
