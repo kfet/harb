@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-07-16
+
 ### Fixed
 
 - **GReader API 401 responses now carry `X-Reader-Google-Bad-Token:
