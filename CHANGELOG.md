@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-07-16
+
 ### Changed
 
 - **GReader API tokens are now deterministic and non-expiring**
