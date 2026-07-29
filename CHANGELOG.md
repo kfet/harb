@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-07-29
+
 ### Fixed
 
 - **GReader clients (Reeder iOS) showed the ingest date instead of the
