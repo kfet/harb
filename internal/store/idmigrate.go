@@ -108,7 +108,7 @@ type migEntry struct {
 //  2. Recompute every entry hash under the new scheme (D4 iff guid sticky, else
 //     D1 / link / title+published) and collapse resulting duplicates to one
 //     survivor per identity. Survivor FetchedAt = EARLIEST member's FetchedAt
-//     so timestampUsec does not resurface it as new in Reeder.
+//     so the GReader sync time does not resurface it as new in Reeder.
 //  3. Remap read.log / starred.log hash columns IN PLACE so read/starred state
 //     follows each entry to its survivor.
 //
@@ -304,8 +304,8 @@ func distinctLinks(group []migEntry) int {
 }
 
 // chooseSurvivor picks the earliest-FetchedAt member (ties broken by oldHash),
-// and sets its FetchedAt to the earliest in the group so timestampUsec cannot
-// resurface it as new.
+// and sets its FetchedAt to the earliest in the group so the GReader sync time
+// (which drives stream ordering and `ot=` windows) cannot resurface it as new.
 func chooseSurvivor(group []migEntry) *migEntry {
 	idx := 0
 	earliest := group[0].e.FetchedAt

@@ -338,14 +338,17 @@ func Run(t *testing.T, newH NewHarness) {
 	t.Run("timestamp-encoding/stream-contents", func(t *testing.T) {
 		// Wire-format lock — both units AND source:
 		//   - published/updated = entry Published, in seconds (display date)
-		//   - timestampUsec     = entry SYNC time = max(Published, FetchedAt), µs
+		//   - timestampUsec     = entry Published (display time), microseconds
 		//   - crawlTimeMsec     = entry FetchedAt, in milliseconds
-		// timestampUsec is the GReader stream cursor/sort key and MUST track
-		// arrival (fetch) time, not publish date, or incremental clients
-		// (Reeder) never see late-fetched, old-dated items (CBC/Penny Arcade
-		// backdate their items). published/updated stay the publish date so
-		// the displayed article date is unchanged. Published and FetchedAt are
-		// deliberately disjoint so a regression swapping the slots fails here.
+		// Reeder treats timestampUsec as the item's canonical date and
+		// displays it in preference to `published`, so it MUST be the
+		// publication date: a feed whose whole archive lands in one poll would
+		// otherwise show every article dated "today" (matches miniflux, which
+		// emits timestampUsec = entry.Date). Arrival time is still exposed as
+		// crawlTimeMsec, and the server keeps ordering / `ot=` filtering on
+		// the internal sync time, so late-fetched backdated items still reach
+		// incremental clients. Published and FetchedAt are deliberately
+		// disjoint so a regression swapping the slots fails here.
 		h := newH(t)
 		// Two fixed, well-defined timestamps with no overlap. Use
 		// values that round-trip cleanly through seconds/ms/µs.
@@ -372,13 +375,10 @@ func Run(t *testing.T, newH NewHarness) {
 				t.Fatalf("compat timestamp-encoding: missing item for hash %q", hh)
 			}
 			wantPubSec := published[i].Unix()
-			// sync time = the later of publish/fetch; fetched is after
-			// published in this fixture, so timestampUsec must read fetch.
-			syncT := published[i]
-			if fetched[i].After(syncT) {
-				syncT = fetched[i]
-			}
-			wantSyncUsec := strconv.FormatInt(syncT.UnixMicro(), 10)
+			// timestampUsec tracks the display (publication) time, never the
+			// fetch time — fetched is deliberately later here so a regression
+			// back to sync time fails this assertion.
+			wantTSUsec := strconv.FormatInt(published[i].UnixMicro(), 10)
 			wantFetchMsec := strconv.FormatInt(fetched[i].UnixMilli(), 10)
 			if it.Published != wantPubSec {
 				t.Errorf("compat timestamp-encoding: item[%d].published=%d, want %d (Published, seconds)", i, it.Published, wantPubSec)
@@ -386,12 +386,65 @@ func Run(t *testing.T, newH NewHarness) {
 			if it.Updated != wantPubSec {
 				t.Errorf("compat timestamp-encoding: item[%d].updated=%d, want %d (Published, seconds)", i, it.Updated, wantPubSec)
 			}
-			if it.TimestampUsec != wantSyncUsec {
-				t.Errorf("compat timestamp-encoding: item[%d].timestampUsec=%q, want %q (sync time = max(Published,FetchedAt), microseconds)", i, it.TimestampUsec, wantSyncUsec)
+			if it.TimestampUsec != wantTSUsec {
+				t.Errorf("compat timestamp-encoding: item[%d].timestampUsec=%q, want %q (Published, microseconds)", i, it.TimestampUsec, wantTSUsec)
 			}
 			if it.CrawlTimeMsec != wantFetchMsec {
 				t.Errorf("compat timestamp-encoding: item[%d].crawlTimeMsec=%q, want %q (FetchedAt, milliseconds)", i, it.CrawlTimeMsec, wantFetchMsec)
 			}
+		}
+	})
+
+	t.Run("timestamp-encoding/bulk-backfill-distinct-timestamps", func(t *testing.T) {
+		// Regression (ratfactor.com/atom.xml): a feed whose entire archive is
+		// ingested in ONE poll gives every entry the same FetchedAt. If
+		// timestampUsec were derived from fetch/sync time, all N items would
+		// share one identical stream timestamp and Reeder would render every
+		// article with the ingest date. timestampUsec must be per-entry and
+		// track publication, so N entries yield N distinct values ordered by
+		// publication date.
+		const n = 8 // < harness MaxPage, so one page holds them all
+		h := newH(t)
+		fetched := make([]time.Time, n)
+		published := make([]time.Time, n)
+		fetch := time.Unix(1800000000, 0).UTC() // one poll: identical for all
+		base := time.Unix(1600000000, 0).UTC()
+		for i := range published {
+			published[i] = base.Add(time.Duration(i) * 24 * time.Hour)
+			fetched[i] = fetch
+		}
+		u, hashes := h.SeedFeedTimes(t, "BF", "BF", published, fetched)
+		w := Do(t, h, "GET", "/reader/api/0/stream/contents/feed/"+u, nil)
+		if w.Code != 200 {
+			t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+		}
+		var resp streamResponseJSON
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal: %v body=%s", err, w.Body.String())
+		}
+		if len(resp.Items) != n {
+			t.Fatalf("bulk-backfill: items=%d, want %d", len(resp.Items), n)
+		}
+		seen := map[string]bool{}
+		want := map[string]string{}
+		for i, hh := range hashes {
+			want[ItemID(hh)] = strconv.FormatInt(published[i].UnixMicro(), 10)
+		}
+		for _, it := range resp.Items {
+			if seen[it.TimestampUsec] {
+				t.Errorf("bulk-backfill: duplicate timestampUsec %q — one poll must not collapse items onto one cursor", it.TimestampUsec)
+			}
+			seen[it.TimestampUsec] = true
+			if it.TimestampUsec != want[it.ID] {
+				t.Errorf("bulk-backfill: item %q timestampUsec=%q, want %q (its own publication time)", it.ID, it.TimestampUsec, want[it.ID])
+			}
+			// crawlTimeMsec still reports the (shared) real fetch time.
+			if wantCrawl := strconv.FormatInt(fetch.UnixMilli(), 10); it.CrawlTimeMsec != wantCrawl {
+				t.Errorf("bulk-backfill: item %q crawlTimeMsec=%q, want %q", it.ID, it.CrawlTimeMsec, wantCrawl)
+			}
+		}
+		if len(seen) != n {
+			t.Errorf("bulk-backfill: %d distinct timestampUsec values, want %d", len(seen), n)
 		}
 	})
 
@@ -516,11 +569,13 @@ func Run(t *testing.T, newH NewHarness) {
 
 	t.Run("backdated-item/visible-to-incremental", func(t *testing.T) {
 		// Regression (the CBC / Penny Arcade bug): an item published in the
-		// past but FETCHED now must sort and stamp by SYNC time =
-		// max(Published, FetchedAt). Many feeds backdate items to article
-		// time; if timestampUsec uses publish time it sits below an
-		// incremental client's cursor and the item is never delivered, even
-		// though it is genuinely new and unread.
+		// past but FETCHED now must SORT and be delivered by the internal
+		// SYNC time = max(Published, FetchedAt). Many feeds backdate items to
+		// article time; if stream ordering / `ot=` used publish time the item
+		// would sit below an incremental client's cursor and never be
+		// delivered, even though it is genuinely new and unread. The emitted
+		// timestampUsec is a separate concern — it is the DISPLAY
+		// (publication) date, because Reeder renders it as the article date.
 		h := newH(t)
 		now := time.Now().UTC().Truncate(time.Second)
 		// 0 = fresh (pub & fetched ~now-2min); 1 = backdated (pub 48h ago,
@@ -543,17 +598,17 @@ func Run(t *testing.T, newH NewHarness) {
 		if resp.ItemRefs[0].ID != ItemLongID(backdated) {
 			t.Errorf("order: ref[0]=%q want backdated %q (latest-fetched must sort first)", resp.ItemRefs[0].ID, ItemLongID(backdated))
 		}
-		// 2. Backdated item's timestampUsec is its fetch time (~now), not its
-		//    publish time (48h ago).
+		// 2. Backdated item's timestampUsec is its PUBLISH time (48h ago),
+		//    not its fetch time — arrival ordering above is independent of it.
 		var backTS string
 		for _, r := range resp.ItemRefs {
 			if r.ID == ItemLongID(backdated) {
 				backTS = r.TimestampUsec
 			}
 		}
-		wantTS := strconv.FormatInt(fetched[1].UnixMicro(), 10)
+		wantTS := strconv.FormatInt(published[1].UnixMicro(), 10)
 		if backTS != wantTS {
-			t.Errorf("backdated timestampUsec=%q, want fetch-time %q (not publish time)", backTS, wantTS)
+			t.Errorf("backdated timestampUsec=%q, want publish-time %q (Reeder displays it as the article date)", backTS, wantTS)
 		}
 		// 3. An incremental client whose cursor already advanced past the
 		//    fresh item (ot between fresh and backdated sync times) MUST still

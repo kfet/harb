@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **GReader clients (Reeder iOS) showed the ingest date instead of the
+  article date for feeds whose whole archive arrived in one poll.** The
+  emitted `timestampUsec` was the internal sync time
+  (`max(published, fetched)`); Reeder treats `timestampUsec` as the item's
+  canonical date and renders it in preference to `published`, so a feed
+  backfilled in a single poll (e.g. `ratfactor.com/atom.xml`: 132 entries,
+  one fetch) had every article stamped with — and displayed at — the
+  ingest time, and all 132 items collapsed onto one identical stream
+  cursor. `timestampUsec` is now the item's publication time
+  (`entryDisplayTime`, falling back to fetch time when the feed gives no
+  date), matching miniflux (`timestampUsec = entry.Date`) and restoring the
+  v0.4.8/0.4.9 behaviour that v0.13.0 regressed. Arrival time is
+  still exposed as `crawlTimeMsec`. Stream ordering and the `ot=`/`nt=`
+  windows keep using the internal sync time, so the v0.13.0 guarantee that
+  backdated-but-newly-fetched items reach incremental clients is
+  unaffected. Read-time fix only — stored `published` values were already
+  correct, so no migration or data rewrite is needed.
+
 ## [0.20.0] - 2026-07-16
 
 ### Changed

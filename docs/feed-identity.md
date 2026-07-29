@@ -161,8 +161,10 @@ does:
      is the same item edited → collapse to one survivor (D1).
 2. **Recompute + collapse.** Every entry hash is recomputed under the new scheme
    and duplicates collapse to one survivor. Survivor `fetched_at` = the
-   **earliest** copy's, so `timestampUsec = max(published, fetched)` does not
-   resurface a survivor as new in Reeder.
+   **earliest** copy's, so the internal sync time `max(published, fetched)` —
+   which drives GReader stream ordering and `ot=` windows — does not resurface
+   a survivor as new in Reeder. (The emitted `timestampUsec` is the publication
+   time; see `entryDisplayTime` in `internal/reader/reader.go`.)
 3. **State remap in place.** `read.log` / `starred.log` hash columns are
    rewritten (copy + atomic swap), never appended — appended lines would carry
    new timestamps and shift GReader ordering/cutoff. A survivor is read if any

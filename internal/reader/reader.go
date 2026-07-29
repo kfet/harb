@@ -593,10 +593,12 @@ func (s *Server) applyRequestFilters(es []store.Entry, r *http.Request, streamID
 	})
 }
 
-// entrySyncTime is the GReader stream cursor / sort key: the time the item
-// became visible to a syncing client (max of fetch and publish). Using fetch
-// time for backdated items keeps timestampUsec monotonic with arrival so
-// incremental clients (Reeder) see late-fetched, old-dated items as new.
+// entrySyncTime is the INTERNAL GReader stream cursor / sort key: the time the
+// item became visible to a syncing client (max of fetch and publish). Using
+// fetch time for backdated items keeps stream ordering and the `ot=`/`nt=`
+// windows monotonic with arrival so incremental clients (Reeder) see
+// late-fetched, old-dated items as new. It is deliberately NOT emitted on the
+// wire — see entryDisplayTime.
 func entrySyncTime(e store.Entry) time.Time {
 	if e.FetchedAt.After(e.Published) {
 		return e.FetchedAt
@@ -619,6 +621,19 @@ func entrySyncLess(a, b store.Entry) bool {
 	return a.Hash < b.Hash
 }
 
+// entryDisplayTime is the item's article date: its published time, falling
+// back to the fetch time for feeds that carry no date. It is what
+// `published`, `updated` AND `timestampUsec` are emitted from.
+//
+// Reeder treats `timestampUsec` as the item's canonical date and displays it
+// in preference to `published`, so it must be the publication time, not the
+// arrival time: a feed whose whole archive arrives in one poll would otherwise
+// show every article dated "today" (originally found in v0.4.8, regressed by
+// v0.13.0). This matches miniflux, which emits timestampUsec = entry.Date.
+// Arrival time stays available to clients as `crawlTimeMsec`, and harb keeps
+// stream ordering and `ot=`/`nt=` filtering on entrySyncTime internally, so
+// the v0.13.0 guarantee that backdated-but-newly-fetched items reach
+// incremental clients is unaffected.
 func entryDisplayTime(e store.Entry) time.Time {
 	if !e.Published.IsZero() {
 		return e.Published
@@ -763,7 +778,7 @@ func (s *Server) toStreamItems(es []store.Entry, op *store.OPML) []streamItem {
 			Published:     ts,
 			Updated:       ts,
 			CrawlTimeMsec: strconv.FormatInt(e.FetchedAt.UnixMilli(), 10),
-			TimestampUsec: strconv.FormatInt(entrySyncTime(e).UnixMicro(), 10),
+			TimestampUsec: strconv.FormatInt(entryDisplayTime(e).UnixMicro(), 10),
 			Author:        e.Author,
 			Alternate:     []streamLink{{HREF: e.Link, Type: "text/html"}},
 			Summary:       streamContent{Content: body},
@@ -851,7 +866,7 @@ func (s *Server) handleItemsIDs(w http.ResponseWriter, r *http.Request) {
 			ID:            longID,
 			LongID:        longID,
 			DirectStreams: directStreams[e.FeedHash],
-			TimestampUsec: strconv.FormatInt(entrySyncTime(e).UnixMicro(), 10),
+			TimestampUsec: strconv.FormatInt(entryDisplayTime(e).UnixMicro(), 10),
 		})
 	}
 	writeJSON(w, out)
@@ -961,6 +976,9 @@ func (s *Server) handleUnreadCount(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			count++
+			// Deliberately arrival time, not entryDisplayTime: this field is
+			// a "has anything new landed" hint, so a backdated item fetched
+			// today must still bump it.
 			if ts := e.FetchedAt.UnixMicro(); ts > newest {
 				newest = ts
 			}
