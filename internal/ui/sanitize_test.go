@@ -369,3 +369,65 @@ func TestIsLinkOnly(t *testing.T) {
 		t.Fatal("comment plus bare link is link-only")
 	}
 }
+
+// TestHoistSourceLink covers render-time hoisting of the enrichment
+// source-link paragraph: a trailing marker (how entries enriched before
+// the ordering flip are stored on disk) moves to the front, an
+// already-leading marker is left byte-for-byte alone, and content with no
+// marker is untouched.
+func TestHoistSourceLink(t *testing.T) {
+	const marker = `<p class="enriched-source-link"><a href="x">Comments</a></p>`
+	const article = `<p>one</p><p>two</p>`
+
+	if got, want := hoistSourceLink(article+marker), marker+article; got != want {
+		t.Errorf("trailing marker not hoisted:\n got %q\nwant %q", got, want)
+	}
+	// Already first: passed through unchanged.
+	if got := hoistSourceLink(marker + article); got != marker+article {
+		t.Errorf("leading marker should be untouched, got %q", got)
+	}
+	// No marker at all: unchanged (and no reparse/reserialize).
+	if got := hoistSourceLink(article); got != article {
+		t.Errorf("markerless body should be untouched, got %q", got)
+	}
+	// The class substring appears but on no matching <p>: unchanged.
+	const decoy = `<div class="enriched-source-link">not a p</div><p>body</p>`
+	if got := hoistSourceLink(decoy); got != decoy {
+		t.Errorf("non-p decoy should be untouched, got %q", got)
+	}
+	// Multi-valued class attribute still matches.
+	multi := `<p>lead</p><p class="foo enriched-source-link"><a href="x">C</a></p>`
+	if got := hoistSourceLink(multi); !strings.HasPrefix(got, `<p class="foo enriched-source-link">`) {
+		t.Errorf("multi-class marker not hoisted, got %q", got)
+	}
+	// Non-class attributes ahead of the class are skipped, not matched.
+	attrs := `<p>lead</p><p id="m" class="enriched-source-link"><a href="x">C</a></p>`
+	if got := hoistSourceLink(attrs); !strings.HasPrefix(got, `<p id="m" class="enriched-source-link">`) {
+		t.Errorf("marker with extra attrs not hoisted, got %q", got)
+	}
+	// A <p> carrying an unrelated class is not mistaken for the marker.
+	other := `<p>lead</p><p class="other">tail</p>`
+	if got := hoistSourceLink(other); got != other {
+		t.Errorf("unrelated class should be untouched, got %q", got)
+	}
+}
+
+// TestEntryBodyHoistsStoredSourceLink pins the end-to-end render path for
+// an already-stored entry whose enriched Content has the source link as a
+// trailing footer: the web UI shows the discussion link first, and the
+// reordering survives the sanitizer (which strips the marker class).
+func TestEntryBodyHoistsStoredSourceLink(t *testing.T) {
+	stored := `<p>article body text</p><p class="enriched-source-link"><a href="https://ex.test/c">Comments</a></p>`
+	got := string(entryBody(store.Entry{Content: stored}))
+	link := `<a href="https://ex.test/c" target="_blank" rel="noopener noreferrer">Comments</a>`
+	if !strings.HasPrefix(got, "<p>"+link+"</p>") {
+		t.Errorf("source link not first after sanitize: %q", got)
+	}
+	if !strings.HasSuffix(got, "<p>article body text</p>") {
+		t.Errorf("article should follow the link: %q", got)
+	}
+	// Stored content itself is never rewritten — hoisting is render-only.
+	if stored != `<p>article body text</p><p class="enriched-source-link"><a href="https://ex.test/c">Comments</a></p>` {
+		t.Fatal("stored content mutated")
+	}
+}

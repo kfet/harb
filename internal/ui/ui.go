@@ -1106,7 +1106,10 @@ func entryBody(e store.Entry) template.HTML {
 	if isLinkOnly(body) {
 		body = e.Summary
 	}
-	return template.HTML(sanitizeHTML(body))
+	// Entries enriched before the source link moved to the top are stored
+	// with it as a trailing footer; hoist at render time (disk content is
+	// left untouched). Runs pre-sanitize, while the marker class exists.
+	return template.HTML(sanitizeHTML(hoistSourceLink(body)))
 }
 
 // entryDetailData is the render input for the entry-detail fragment,

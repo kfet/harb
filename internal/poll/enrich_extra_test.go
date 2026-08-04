@@ -140,9 +140,9 @@ func TestEnrichLinkOnlyContent(t *testing.T) {
 	if !strings.Contains(entries[0].Content, "external article body") {
 		t.Errorf("agg not enriched: %q", entries[0].Content)
 	}
-	// The original "Comments" forum link is preserved as a footer so the
-	// reader keeps a path to the discussion thread.
-	if !strings.Contains(entries[0].Content, `<p class="enriched-source-link"><p><a href="x">Comments</a></p></p>`) {
+	// The original "Comments" forum link is preserved and leads the
+	// content so the reader sees the discussion thread first.
+	if !strings.HasPrefix(entries[0].Content, `<p class="enriched-source-link"><p><a href="x">Comments</a></p></p>`) {
 		t.Errorf("forum link not preserved: %q", entries[0].Content)
 	}
 	if entries[1].Content != "<p>already has a full body</p>" {
@@ -159,35 +159,35 @@ func TestEnrichLinkOnlyContent(t *testing.T) {
 	enrichLinkOnlyContent(context.Background(), client, "ua", []store.Entry{{Hash: "x"}}, isNew)
 }
 
-// TestWithPreservedLink covers the footer composer: anchor present appends
-// the preserved link; anchorless or empty original bodies skip the footer
+// TestWithPreservedLink covers the composer: anchor present prepends
+// the preserved link; anchorless or empty original bodies skip it
 // to avoid a dangling empty paragraph; and the Content-over-Summary
 // fallback (linkOnlyBody) is honoured.
 func TestWithPreservedLink(t *testing.T) {
 	article := "<p>real article</p>"
 
-	// Original link lives in Summary (Content empty) -> appended.
+	// Original link lives in Summary (Content empty) -> prepended.
 	got := withPreservedLink(store.Entry{Summary: `<p><a href="x">Comments</a></p>`}, article)
-	want := article + `<p class="enriched-source-link"><p><a href="x">Comments</a></p></p>`
+	want := `<p class="enriched-source-link"><p><a href="x">Comments</a></p></p>` + article
 	if got != want {
 		t.Errorf("summary link not preserved:\n got %q\nwant %q", got, want)
 	}
 
 	// Original link lives in Content -> Content wins over Summary.
 	got = withPreservedLink(store.Entry{Content: `<a href="c">Source</a>`, Summary: `<a href="s">other</a>`}, article)
-	want = article + `<p class="enriched-source-link"><a href="c">Source</a></p>`
+	want = `<p class="enriched-source-link"><a href="c">Source</a></p>` + article
 	if got != want {
 		t.Errorf("content link not preserved:\n got %q\nwant %q", got, want)
 	}
 
-	// Anchorless original body -> article returned unchanged (no footer).
+	// Anchorless original body -> article returned unchanged (no marker).
 	if got := withPreservedLink(store.Entry{Summary: "just some text"}, article); got != article {
-		t.Errorf("anchorless body should skip footer, got %q", got)
+		t.Errorf("anchorless body should skip marker, got %q", got)
 	}
 
 	// Empty original body -> article returned unchanged.
 	if got := withPreservedLink(store.Entry{}, article); got != article {
-		t.Errorf("empty body should skip footer, got %q", got)
+		t.Errorf("empty body should skip marker, got %q", got)
 	}
 }
 

@@ -294,11 +294,76 @@ var allowedAttrs = map[string]map[string]bool{
 	"wbr":     {},
 }
 
-// isLinkOnly reports whether s, parsed as HTML, carries no meaningful
-// content outside of <a> link labels — i.e. it is empty, whitespace, or
-// only a bare link. Some feeds publish exactly this as content:encoded
-// (a lone "Source"/"Read more" link), which is useless as an entry
-// preview, so entryBody falls back to the feeds Summary in that case.
+// sourceLinkClass marks the paragraph poll-time enrichment wraps an
+// aggregator entry's original discussion ("Comments") anchor in.
+const sourceLinkClass = "enriched-source-link"
+
+// hoistSourceLink moves an enrichment source-link paragraph to the front
+// of fragment s when it is not already there, returning the reordered
+// HTML (or s unchanged when there is nothing to move).
+//
+// Enrichment appends/prepends the marker paragraph at store time, but
+// entries enriched before the ordering flipped are stored with the link
+// as a trailing footer, and stored Content is never rewritten on disk.
+// Hoisting at render time gives those older entries the same
+// link-at-the-top preview as freshly polled ones, for the web UI only —
+// GReader clients still see the stored order.
+//
+// It runs BEFORE sanitizeHTML, while the class attribute the marker is
+// identified by still exists (the sanitizer's allow-list drops class),
+// so the reordering survives sanitization even though the marker does
+// not.
+func hoistSourceLink(s string) string {
+	if !strings.Contains(s, sourceLinkClass) {
+		return s
+	}
+	ctx := &html.Node{Type: html.ElementNode, Data: "body", DataAtom: atom.Body}
+	// ParseFragment with a valid context node is total on string input,
+	// as in sanitizeHTML; an empty node set means nothing to hoist.
+	nodes, _ := html.ParseFragment(strings.NewReader(s), ctx)
+	idx := -1
+	for i, n := range nodes {
+		if isSourceLinkNode(n) {
+			idx = i
+			break
+		}
+	}
+	if idx <= 0 {
+		// Not found (idx<0) or already first (idx==0): leave s alone so
+		// the stored markup is passed through byte-for-byte.
+		return s
+	}
+	reordered := make([]*html.Node, 0, len(nodes))
+	reordered = append(reordered, nodes[idx])
+	reordered = append(reordered, nodes[:idx]...)
+	reordered = append(reordered, nodes[idx+1:]...)
+	var b strings.Builder
+	for _, n := range reordered {
+		// Render only fails on a Writer error; strings.Builder never errors.
+		_ = html.Render(&b, n)
+	}
+	return b.String()
+}
+
+// isSourceLinkNode reports whether n is the <p class="enriched-source-link">
+// marker paragraph emitted by poll-time enrichment.
+func isSourceLinkNode(n *html.Node) bool {
+	if n.Type != html.ElementNode || strings.ToLower(n.Data) != "p" {
+		return false
+	}
+	for _, a := range n.Attr {
+		if strings.ToLower(a.Key) != "class" {
+			continue
+		}
+		for _, f := range strings.Fields(a.Val) {
+			if f == sourceLinkClass {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // isLinkOnly reports whether s, parsed as HTML, carries no meaningful
 // content outside of <a> link labels — i.e. it is empty, whitespace, or
 // only a bare link. Some feeds publish exactly this as content:encoded

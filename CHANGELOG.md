@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Enriched aggregator entries now lead with the discussion link.** For
+  link-only aggregator items (e.g. Hacker News / Lobsters style entries
+  whose body is a lone "Comments" anchor), poll-time content enrichment
+  fetches the linked article and preserves the original anchor. That
+  anchor used to be appended as a footer below the fetched article,
+  which put it an entire article-length scroll away; it is now prepended,
+  so the one-click path to the thread is the first thing in the entry.
+  Entries enriched by earlier versions are stored with the link as a
+  trailing footer and stored content is never rewritten on disk, so the
+  web UI additionally hoists the marked source-link paragraph to the top
+  at render time. Note this render-time hoist applies to the web UI only
+  — GReader clients (Reeder, NetNewsWire, …) still see the stored order
+  for pre-existing entries; newly enriched entries are correct everywhere.
+
 ## [0.20.1] - 2026-07-29
 
 ### Fixed

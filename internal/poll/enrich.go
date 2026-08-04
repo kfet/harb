@@ -85,9 +85,9 @@ func enrichLinkOnlyContent(ctx context.Context, client *http.Client, ua string, 
 }
 
 // withPreservedLink composes the new Content for a link-only entry that was
-// successfully enriched: the fetched article followed by the entry's
-// original link-only body (the forum/"Comments" discussion link) wrapped in
-// a marker paragraph, so the reader keeps a one-click path to the thread.
+// successfully enriched: the entry's original link-only body (the forum/
+// "Comments" discussion link) wrapped in a marker paragraph FIRST, then the
+// fetched article — the thread link leads the preview instead of trailing it.
 // The original anchor markup is preserved verbatim to keep the feed's own
 // label. If the original body carries no anchor (nothing to preserve), the
 // article is returned unchanged to avoid a dangling empty paragraph.
@@ -96,7 +96,7 @@ func withPreservedLink(orig store.Entry, article string) string {
 	if body == "" || !hasAnchor(body) {
 		return article
 	}
-	return article + `<p class="enriched-source-link">` + body + `</p>`
+	return `<p class="enriched-source-link">` + body + `</p>` + article
 }
 
 // hasAnchor reports whether s contains at least one <a> element.
