@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The v0.20.2 "discussion link at the top" change did not actually work
+  on stored data.** The marker wrapper was a `<p>`, but an aggregator's
+  link-only body is itself `<p><a>Comments</a></p>` — and a `<p>` inside a
+  `<p>` is invalid HTML. Every parser splits it, so
+  `<p class="enriched-source-link"><p><a>Comments</a></p></p>` parses as
+  three siblings: an *empty* marker paragraph, the real anchor paragraph,
+  and a trailing empty paragraph from the outer close tag. The render-time
+  hoist therefore moved the empty marker to the top and left the actual
+  Comments link at the bottom, plus two stray `<p></p>`. Fixed on both
+  sides: enrichment now wraps the preserved anchor in a
+  `<div class="enriched-source-link">` (a `<div>` may legally contain flow
+  content, so nothing is split), and the web UI's hoist recognises the
+  legacy split shape — it moves the marker together with the split-out
+  siblings up to the terminating empty paragraph, and drops the empty
+  artefacts so no stray `<p></p>` is rendered. Entries stored by
+  v0.20.0-v0.20.2 are repaired at render time; stored content is still
+  never rewritten on disk. As before this is web-UI-only — GReader clients
+  see the stored order for pre-existing entries.
+
 ## [0.20.2] - 2026-08-04
 
 ### Changed

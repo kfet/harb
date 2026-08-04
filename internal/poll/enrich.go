@@ -86,17 +86,25 @@ func enrichLinkOnlyContent(ctx context.Context, client *http.Client, ua string, 
 
 // withPreservedLink composes the new Content for a link-only entry that was
 // successfully enriched: the entry's original link-only body (the forum/
-// "Comments" discussion link) wrapped in a marker paragraph FIRST, then the
+// "Comments" discussion link) wrapped in a marker element FIRST, then the
 // fetched article — the thread link leads the preview instead of trailing it.
 // The original anchor markup is preserved verbatim to keep the feed's own
 // label. If the original body carries no anchor (nothing to preserve), the
-// article is returned unchanged to avoid a dangling empty paragraph.
+// article is returned unchanged to avoid a dangling empty element.
+//
+// The wrapper is a <div>, NOT a <p>: aggregator bodies are themselves
+// typically "<p><a>Comments</a></p>", and a <p> inside a <p> is invalid
+// HTML — every parser silently splits it, leaving an EMPTY marker element
+// and orphaning the real anchor as a following sibling. A <div> may
+// legally contain flow content, so the marker stays wrapped around the
+// anchor it marks. See hoistSourceLink in internal/ui for the render-time
+// repair of entries already stored with the broken nesting.
 func withPreservedLink(orig store.Entry, article string) string {
 	body := strings.TrimSpace(linkOnlyBody(orig))
 	if body == "" || !hasAnchor(body) {
 		return article
 	}
-	return `<p class="enriched-source-link">` + body + `</p>` + article
+	return `<div class="enriched-source-link">` + body + `</div>` + article
 }
 
 // hasAnchor reports whether s contains at least one <a> element.

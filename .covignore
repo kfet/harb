@@ -87,10 +87,10 @@ github.com/kfet/harb/internal/poll/resolve/webflow.go:146\.16,148\.3
 # their input in a strings.Reader, so goquery.NewDocumentFromReader cannot
 # error (the reader never errors and html.Parse does not reject malformed
 # HTML). Same unreachable defensive branch as the resolver above.
-github.com/kfet/harb/internal/poll/enrich.go:195\.16,197\.3
-github.com/kfet/harb/internal/poll/enrich.go:212\.16,214\.3
-github.com/kfet/harb/internal/poll/enrich.go:297\.16,299\.3
-github.com/kfet/harb/internal/poll/enrich.go:105\.16,107\.3
+github.com/kfet/harb/internal/poll/enrich.go:203\.16,205\.3
+github.com/kfet/harb/internal/poll/enrich.go:220\.16,222\.3
+github.com/kfet/harb/internal/poll/enrich.go:305\.16,307\.3
+github.com/kfet/harb/internal/poll/enrich.go:113\.16,115\.3
 
 # Sticky-identity migration (idmigrate.go) + sticky sidecar (store.go):
 # defensive error returns and by-construction invariants. Every reachable

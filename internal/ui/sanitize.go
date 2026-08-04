@@ -294,25 +294,39 @@ var allowedAttrs = map[string]map[string]bool{
 	"wbr":     {},
 }
 
-// sourceLinkClass marks the paragraph poll-time enrichment wraps an
+// sourceLinkClass marks the element poll-time enrichment wraps an
 // aggregator entry's original discussion ("Comments") anchor in.
 const sourceLinkClass = "enriched-source-link"
 
-// hoistSourceLink moves an enrichment source-link paragraph to the front
-// of fragment s when it is not already there, returning the reordered
-// HTML (or s unchanged when there is nothing to move).
+// hoistSourceLink moves the enrichment source-link marker — and the anchor
+// it belongs to — to the front of fragment s, returning the reordered HTML
+// (or s unchanged when there is nothing to move).
 //
-// Enrichment appends/prepends the marker paragraph at store time, but
-// entries enriched before the ordering flipped are stored with the link
-// as a trailing footer, and stored Content is never rewritten on disk.
-// Hoisting at render time gives those older entries the same
-// link-at-the-top preview as freshly polled ones, for the web UI only —
-// GReader clients still see the stored order.
+// Enrichment emits the marker at store time and stored Content is never
+// rewritten on disk, so this repairs two legacy shapes at render time:
+//
+//   - Entries enriched before the ordering flipped store the marker as a
+//     trailing footer; it is moved to the front.
+//   - Entries enriched while the marker was a <p> store INVALID nesting:
+//     the aggregator body is itself "<p><a>Comments</a></p>", and a <p>
+//     inside a <p> is split by every HTML parser. The stored bytes
+//     "<p class=marker><p><a>Comments</a></p></p>" therefore parse as
+//     THREE siblings: an empty marker <p>, the real anchor <p>, and a
+//     trailing empty <p> produced by the outer close tag. Hoisting the
+//     marker alone would move an empty paragraph and strand the anchor.
+//
+// So when the marker parses empty, its group is extended forward through
+// the split-out siblings up to and including the terminating empty <p>
+// (the outer close tag), that whole group is moved to the front, and the
+// empty paragraphs within it are dropped so no stray <p></p> is rendered.
+// If no terminator is found the markup is not the known split shape, so
+// the group stays just the marker itself rather than risk swallowing the
+// article.
 //
 // It runs BEFORE sanitizeHTML, while the class attribute the marker is
 // identified by still exists (the sanitizer's allow-list drops class),
 // so the reordering survives sanitization even though the marker does
-// not.
+// not. Web UI only — GReader clients still see the stored order.
 func hoistSourceLink(s string) string {
 	if !strings.Contains(s, sourceLinkClass) {
 		return s
@@ -328,15 +342,39 @@ func hoistSourceLink(s string) string {
 			break
 		}
 	}
-	if idx <= 0 {
-		// Not found (idx<0) or already first (idx==0): leave s alone so
-		// the stored markup is passed through byte-for-byte.
+	if idx < 0 {
 		return s
 	}
+
+	// end is exclusive: nodes[idx:end] is the marker's group.
+	end := idx + 1
+	if isEmptyParagraph(nodes[idx]) {
+		for i := idx + 1; i < len(nodes); i++ {
+			if isEmptyParagraph(nodes[i]) {
+				// The outer </p> terminator: group ends here.
+				end = i + 1
+				break
+			}
+		}
+	}
+
+	group := make([]*html.Node, 0, end-idx)
+	for _, n := range nodes[idx:end] {
+		if isEmptyParagraph(n) {
+			continue // drop the empty marker / orphan close-tag paragraph
+		}
+		group = append(group, n)
+	}
+	if idx == 0 && end == idx+1 && len(group) == 1 {
+		// Already first, nothing split or dropped: pass the stored markup
+		// through byte-for-byte rather than reparse-reserialise it.
+		return s
+	}
+
 	reordered := make([]*html.Node, 0, len(nodes))
-	reordered = append(reordered, nodes[idx])
+	reordered = append(reordered, group...)
 	reordered = append(reordered, nodes[:idx]...)
-	reordered = append(reordered, nodes[idx+1:]...)
+	reordered = append(reordered, nodes[end:]...)
 	var b strings.Builder
 	for _, n := range reordered {
 		// Render only fails on a Writer error; strings.Builder never errors.
@@ -345,10 +383,28 @@ func hoistSourceLink(s string) string {
 	return b.String()
 }
 
-// isSourceLinkNode reports whether n is the <p class="enriched-source-link">
-// marker paragraph emitted by poll-time enrichment.
+// isEmptyParagraph reports whether n is a <p> element carrying no
+// meaningful content — no child elements and only whitespace text. These
+// are the artefacts an HTML parser leaves behind when it splits the
+// invalid p-inside-p nesting older enrichment produced.
+func isEmptyParagraph(n *html.Node) bool {
+	if n.Type != html.ElementNode || n.DataAtom != atom.P {
+		return false
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if c.Type != html.TextNode || strings.TrimSpace(c.Data) != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// isSourceLinkNode reports whether n is the element marked with
+// sourceLinkClass by poll-time enrichment. Both the current <div> wrapper
+// and the legacy <p> one are recognised, since stored content is never
+// rewritten.
 func isSourceLinkNode(n *html.Node) bool {
-	if n.Type != html.ElementNode || strings.ToLower(n.Data) != "p" {
+	if n.Type != html.ElementNode || (n.DataAtom != atom.Div && n.DataAtom != atom.P) {
 		return false
 	}
 	for _, a := range n.Attr {

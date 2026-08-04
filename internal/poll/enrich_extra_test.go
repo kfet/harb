@@ -142,7 +142,7 @@ func TestEnrichLinkOnlyContent(t *testing.T) {
 	}
 	// The original "Comments" forum link is preserved and leads the
 	// content so the reader sees the discussion thread first.
-	if !strings.HasPrefix(entries[0].Content, `<p class="enriched-source-link"><p><a href="x">Comments</a></p></p>`) {
+	if !strings.HasPrefix(entries[0].Content, `<div class="enriched-source-link"><p><a href="x">Comments</a></p></div>`) {
 		t.Errorf("forum link not preserved: %q", entries[0].Content)
 	}
 	if entries[1].Content != "<p>already has a full body</p>" {
@@ -168,14 +168,14 @@ func TestWithPreservedLink(t *testing.T) {
 
 	// Original link lives in Summary (Content empty) -> prepended.
 	got := withPreservedLink(store.Entry{Summary: `<p><a href="x">Comments</a></p>`}, article)
-	want := `<p class="enriched-source-link"><p><a href="x">Comments</a></p></p>` + article
+	want := `<div class="enriched-source-link"><p><a href="x">Comments</a></p></div>` + article
 	if got != want {
 		t.Errorf("summary link not preserved:\n got %q\nwant %q", got, want)
 	}
 
 	// Original link lives in Content -> Content wins over Summary.
 	got = withPreservedLink(store.Entry{Content: `<a href="c">Source</a>`, Summary: `<a href="s">other</a>`}, article)
-	want = `<p class="enriched-source-link"><a href="c">Source</a></p>` + article
+	want = `<div class="enriched-source-link"><a href="c">Source</a></div>` + article
 	if got != want {
 		t.Errorf("content link not preserved:\n got %q\nwant %q", got, want)
 	}
