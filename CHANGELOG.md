@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.20.2] - 2026-08-04
+
 ### Changed
 
 - **Enriched aggregator entries now lead with the discussion link.** For
