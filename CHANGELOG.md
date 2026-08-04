@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.20.3] - 2026-08-04
+
 ### Fixed
 
 - **The v0.20.2 "discussion link at the top" change did not actually work
