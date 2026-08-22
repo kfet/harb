@@ -192,6 +192,7 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	uiSrv.Secure = cfg.UI.Secure
+	uiSrv.LinkRewrite = cfg.UI.LinkRewrite
 	uiSrv.StaticVer = harb.Commit
 	uiSrv.Version = harb.Version
 	uiSrv.ConfigPath = cfgPath

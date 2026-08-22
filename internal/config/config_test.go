@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/kfet/harb/internal/store"
 )
@@ -336,5 +338,99 @@ func TestFileOPMLUpdateWriteError(t *testing.T) {
 	got, _ := f.Load()
 	if len(got.Feeds) != 1 || got.Feeds[0].XMLURL != "good" {
 		t.Fatalf("failed Update corrupted state: %+v", got.Feeds)
+	}
+}
+
+// TestLinkRewriteRoundTrip pins the ui.link_rewrite map through
+// Save→Load and through a hand-written config.json, since operators
+// edit that file by hand.
+func TestLinkRewriteRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.json")
+	c := Default()
+	c.UI.LinkRewrite = map[string]string{"x.com": "xcancel.com", "twitter.com": "xcancel.com"}
+	if err := Save(p, c); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.UI.LinkRewrite["x.com"] != "xcancel.com" || got.UI.LinkRewrite["twitter.com"] != "xcancel.com" {
+		t.Fatalf("round trip lost rules: %+v", got.UI.LinkRewrite)
+	}
+
+	// Hand-written form, and the default (absent) case.
+	hand := filepath.Join(dir, "hand.json")
+	if err := os.WriteFile(hand, []byte(`{"ui":{"link_rewrite":{"x.com":"xcancel.com"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h, err := Load(hand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.UI.LinkRewrite["x.com"] != "xcancel.com" {
+		t.Fatalf("hand-written config: %+v", h.UI)
+	}
+	if Default().UI.LinkRewrite != nil {
+		t.Fatal("link_rewrite must be empty by default")
+	}
+}
+
+// TestFileOPMLEnsureLoadedContended pins ensureLoaded's double-checked
+// early return: a caller that passed the read-locked fast check while
+// the state was still empty, then blocked on the write lock behind the
+// caller doing the one-time disk read, must return without re-reading.
+//
+// Reaching that branch needs BOTH callers past the fast check before
+// either takes the write lock — start the second one later and it parks
+// on the READ lock instead, returning from the fast check. The
+// slow-path hook is therefore used as a barrier: both callers are held
+// on exactly that boundary until both have arrived, then released
+// together. One wins the write lock and is parked inside readOPML; the
+// other has the whole of that window to call f.mu.Lock() and wake into
+// the double check.
+func TestFileOPMLEnsureLoadedContended(t *testing.T) {
+	dir := t.TempDir()
+	f := NewFileOPML(dir)
+	barrier := make(chan struct{})
+	var arrived int32
+	origSlow, origRead := ensureLoadedSlowPath, readOPML
+	ensureLoadedSlowPath = func() {
+		if atomic.AddInt32(&arrived, 1) == 2 {
+			close(barrier)
+		}
+		<-barrier
+	}
+	// The winner holds the write lock across this read; the sleep is the
+	// window the loser has to park on that lock (it needs only the few
+	// instructions between the barrier and Lock, so 50ms is ample).
+	readOPML = func(string) (*store.OPML, error) {
+		time.Sleep(50 * time.Millisecond)
+		return &store.OPML{Feeds: []store.Feed{{XMLURL: "https://x/feed", Title: "X"}}}, nil
+	}
+	defer func() { ensureLoadedSlowPath, readOPML = origSlow, origRead }()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	for i := 0; i < 2; i++ {
+		go func() { defer wg.Done(); check(t, f.ensureLoaded()) }()
+	}
+	wg.Wait()
+
+	o, err := f.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(o.Feeds) != 1 || o.Feeds[0].XMLURL != "https://x/feed" {
+		t.Fatalf("loaded %+v, want the single read feed", o.Feeds)
+	}
+}
+
+// check fails the test on a non-nil error from a helper goroutine.
+func check(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Errorf("ensureLoaded: %v", err)
 	}
 }

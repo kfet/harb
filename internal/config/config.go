@@ -29,6 +29,19 @@ type Config struct {
 type UIConfig struct {
 	Theme  string `json:"theme,omitempty"`
 	Secure bool   `json:"secure,omitempty"`
+
+	// LinkRewrite maps a link host to a replacement host for outbound
+	// links rendered by the WEB UI ONLY (entry bodies' <a href> and the
+	// entry's own source link). Empty by default — harb stays neutral;
+	// this is strictly opt-in. Canonical example:
+	//
+	//	"link_rewrite": {"x.com": "xcancel.com", "twitter.com": "xcancel.com"}
+	//
+	// Keys and values are bare hosts (no scheme, no path, no port).
+	// Junk entries are ignored at use rather than failing config load.
+	// The Reader API is deliberately NOT rewritten: native clients treat
+	// item URLs as identity-adjacent (dedupe / read state).
+	LinkRewrite map[string]string `json:"link_rewrite,omitempty"`
 }
 
 // Default returns a Config populated with sensible defaults.
@@ -60,6 +73,17 @@ func Load(path string) (Config, error) {
 
 // Hookable for testing.
 var jsonMarshalIndent = json.MarshalIndent
+
+// Hookable for testing: lets a test hold the one-time OPML read open
+// long enough to exercise ensureLoaded's contended path.
+var readOPML = store.ReadOPML
+
+// Hookable for testing: a no-op in production, called on ensureLoaded's
+// slow path after the read-locked fast check and before the write lock
+// is taken. A test uses it to line two callers up on exactly that
+// boundary, which is the only way to reach the double-checked return
+// deterministically.
+var ensureLoadedSlowPath = func() {}
 
 // Save atomically writes the config.
 func Save(path string, c Config) error {
@@ -100,12 +124,13 @@ func (f *FileOPML) ensureLoaded() error {
 		return nil
 	}
 	f.mu.RUnlock()
+	ensureLoadedSlowPath()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.cur != nil {
 		return nil
 	}
-	o, err := store.ReadOPML(f.Path)
+	o, err := readOPML(f.Path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			f.cur = &store.OPML{}

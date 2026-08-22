@@ -146,6 +146,31 @@ deployment can't use passkeys. Once serving, open **settings → passkeys
 the login page. Credentials are stored in `credentials.json` and you
 can register several (e.g. laptop + phone).
 
+### Link host rewriting
+
+The web UI can send outbound links through a front-end mirror by
+remapping their **host**. Off by default; opt in with a `link_rewrite`
+map under `ui` in `config.json`:
+
+```json
+"ui": {
+  "link_rewrite": {"x.com": "xcancel.com", "twitter.com": "xcancel.com"}
+}
+```
+
+Keys and values are bare hosts (no scheme, path or port); entries that
+aren't are ignored rather than failing the config load. Matching is
+case-insensitive and covers `www.` and subdomains (so
+`mobile.twitter.com` follows `twitter.com`). Only the host is replaced —
+scheme, port, path, query and fragment survive.
+
+Scope is deliberately narrow: it applies to links in the **web UI only**
+(entry-body anchors and the entry's own source link), never to `img`
+sources or other media, and never to item URLs served over the Reader
+API — native clients treat those as identity for dedupe and read state.
+The map is applied exactly once per URL, so a mutually recursive map
+can't loop. Unsafe links dropped by the sanitizer stay dropped.
+
 ## Storage layout
 
 ```

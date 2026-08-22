@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Web-UI link host rewriting** (`ui.link_rewrite` in `config.json`).
+  An opt-in host → host map rewrites outbound links rendered by the web
+  UI, so e.g. `{"x.com": "xcancel.com", "twitter.com": "xcancel.com"}`
+  sends X links to a front-end mirror. Empty by default — harb stays
+  neutral. Matching is case-insensitive with `www.`-stripping and
+  subdomain suffix support (`mobile.twitter.com` follows
+  `twitter.com`); only the host is replaced, and the map is applied
+  exactly once per URL so a mutually recursive map can't loop. Scope is
+  strictly view-layer: entry-body `<a href>` and the entry's own source
+  link only — never `src`/`poster`/`srcset`/`cite`, and never the
+  Reader API's item URLs, which native clients use as identity for
+  dedupe and read state. Links the sanitizer drops as unsafe stay
+  dropped. Junk rules (with a scheme, path or port) are ignored instead
+  of failing the config load.
+
 ## [0.20.3] - 2026-08-04
 
 ### Fixed

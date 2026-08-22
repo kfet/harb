@@ -100,7 +100,7 @@ func TestSanitizeHTMLHostile(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := sanitizeHTML(c.in)
+			got := sanitizeHTML(c.in, nil)
 			low := strings.ToLower(got)
 			for _, a := range c.absent {
 				if strings.Contains(low, strings.ToLower(a)) {
@@ -123,7 +123,7 @@ func TestSanitizeHTMLPreservesSafeMarkup(t *testing.T) {
 		`<ul><li>one</li><li>two</li></ul>` +
 		`<img src="https://example.com/a.png" alt="pic">` +
 		`<blockquote cite="https://example.com">quote</blockquote>`
-	got := sanitizeHTML(in)
+	got := sanitizeHTML(in, nil)
 	for _, want := range []string{
 		"<strong>world</strong>",
 		`href="https://example.com/post"`,
@@ -141,11 +141,11 @@ func TestSanitizeHTMLPreservesSafeMarkup(t *testing.T) {
 // TestSanitizeHTMLOpenLinks verifies the open-in-new-tab rewrite is
 // applied to safe links and that an author-specified target wins.
 func TestSanitizeHTMLOpenLinks(t *testing.T) {
-	got := sanitizeHTML(`<a href="https://example.com">x</a>`)
+	got := sanitizeHTML(`<a href="https://example.com">x</a>`, nil)
 	if !strings.Contains(got, `target="_blank"`) || !strings.Contains(got, `rel="noopener noreferrer"`) {
 		t.Fatalf("expected target/rel injection, got: %s", got)
 	}
-	got2 := sanitizeHTML(`<a href="https://example.com" target="_self">x</a>`)
+	got2 := sanitizeHTML(`<a href="https://example.com" target="_self">x</a>`, nil)
 	if strings.Contains(got2, "_blank") {
 		t.Fatalf("author target should win, got: %s", got2)
 	}
@@ -156,7 +156,7 @@ func TestSanitizeHTMLOpenLinks(t *testing.T) {
 
 // TestSanitizeHTMLEmpty covers the empty-input fast path.
 func TestSanitizeHTMLEmpty(t *testing.T) {
-	if got := sanitizeHTML(""); got != "" {
+	if got := sanitizeHTML("", nil); got != "" {
 		t.Fatalf("empty input must yield empty output, got %q", got)
 	}
 }
@@ -165,7 +165,7 @@ func TestSanitizeHTMLEmpty(t *testing.T) {
 // non-dangerous element is unwrapped: the tag is dropped, its safe text
 // children survive.
 func TestSanitizeHTMLUnknownTagUnwrapped(t *testing.T) {
-	got := sanitizeHTML(`<center><marquee>hi <b>there</b></marquee></center>`)
+	got := sanitizeHTML(`<center><marquee>hi <b>there</b></marquee></center>`, nil)
 	if strings.Contains(got, "marquee") || strings.Contains(got, "center") {
 		t.Fatalf("unknown tags should be unwrapped, got: %s", got)
 	}
@@ -183,7 +183,7 @@ func TestSanitizeHTMLRelativeURL(t *testing.T) {
 		`<a href="foo/bar:baz">x</a>`,
 		`<a href="mailto:a@b.com">x</a>`,
 	} {
-		got := sanitizeHTML(in)
+		got := sanitizeHTML(in, nil)
 		if !strings.Contains(got, "href=") {
 			t.Errorf("relative/safe href should be kept for %q, got: %s", in, got)
 		}
@@ -194,7 +194,7 @@ func TestSanitizeHTMLRelativeURL(t *testing.T) {
 // confirms a hostile feed body cannot inject script.
 func TestEntryBodySanitizes(t *testing.T) {
 	e := store.Entry{Content: `<p>ok</p><script>alert(1)</script>`}
-	got := string(entryBody(e))
+	got := string(entryBody(e, nil))
 	if strings.Contains(got, "<script") {
 		t.Fatalf("script leaked through entryBody: %s", got)
 	}
@@ -203,7 +203,7 @@ func TestEntryBodySanitizes(t *testing.T) {
 	}
 	// Summary fallback path is also sanitized.
 	e2 := store.Entry{Summary: `<img src=x onerror=alert(1)>`}
-	if strings.Contains(string(entryBody(e2)), "onerror") {
+	if strings.Contains(string(entryBody(e2, nil)), "onerror") {
 		t.Fatalf("onerror leaked via summary fallback")
 	}
 }
@@ -214,7 +214,7 @@ func TestEntryBodySanitizes(t *testing.T) {
 // stripped the link.
 func TestSanitizeHTMLMagnetLink(t *testing.T) {
 	in := `<a href="magnet:?xt=urn:btih:24FFFE3CE9A05888DC422C65FD4D7DD17284885E">grab</a>`
-	got := sanitizeHTML(in)
+	got := sanitizeHTML(in, nil)
 	if !strings.Contains(got, "magnet:?xt=urn:btih:24FFFE") {
 		t.Fatalf("magnet href should survive sanitization, got: %s", got)
 	}
@@ -239,7 +239,7 @@ func TestLinkURL(t *testing.T) {
 		"xmpp:user@example.com",
 	}
 	for _, v := range keep {
-		if LinkURL(v) == "" {
+		if LinkURL(v, nil) == "" {
 			t.Errorf("LinkURL(%q) should be kept, got empty", v)
 		}
 	}
@@ -253,8 +253,8 @@ func TestLinkURL(t *testing.T) {
 		"java\tscript:alert(1)",
 	}
 	for _, v := range drop {
-		if LinkURL(v) != "" {
-			t.Errorf("LinkURL(%q) should be dropped, got %q", v, LinkURL(v))
+		if LinkURL(v, nil) != "" {
+			t.Errorf("LinkURL(%q) should be dropped, got %q", v, LinkURL(v, nil))
 		}
 	}
 }
@@ -334,7 +334,7 @@ func TestEntryBodyLinkOnlyFallback(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := string(entryBody(tc.entry))
+			got := string(entryBody(tc.entry, nil))
 			if tc.wantContain != "" && !strings.Contains(got, tc.wantContain) {
 				t.Fatalf("got %q, want it to contain %q", got, tc.wantContain)
 			}
@@ -460,7 +460,7 @@ func TestHoistSourceLinkSplitParagraph(t *testing.T) {
 // reordering survives the sanitizer (which strips the marker class).
 func TestEntryBodyHoistsStoredSourceLink(t *testing.T) {
 	stored := `<p>article body text</p><div class="enriched-source-link"><a href="https://ex.test/c">Comments</a></div>`
-	got := string(entryBody(store.Entry{Content: stored}))
+	got := string(entryBody(store.Entry{Content: stored}, nil))
 	link := `<a href="https://ex.test/c" target="_blank" rel="noopener noreferrer">Comments</a>`
 	if !strings.HasPrefix(got, "<div>"+link+"</div>") {
 		t.Errorf("source link not first after sanitize: %q", got)
@@ -483,7 +483,7 @@ func TestEntryBodyHoistsRealLobstersShape(t *testing.T) {
 	const url = "https://lobste.rs/s/x"
 	stored := `<p>article body text</p>` +
 		`<p class="enriched-source-link"><p><a href="` + url + `">Comments</a></p></p>`
-	got := string(entryBody(store.Entry{Content: stored}))
+	got := string(entryBody(store.Entry{Content: stored}, nil))
 
 	iLink := strings.Index(got, url)
 	iArticle := strings.Index(got, "article body text")

@@ -37,7 +37,11 @@ import (
 // (e.g. bluemonday): x/net is already a transitive dependency via
 // gofeed, so this adds no new module while keeping the project's
 // stdlib-mostly constraint intact.
-func sanitizeHTML(s string) string {
+//
+// rules is the optional view-layer link-host rewrite map (see
+// rewriteLinkHost): surviving <a href> values — and only those — have
+// their host remapped after the safety check.
+func sanitizeHTML(s string, rules map[string]string) string {
 	if s == "" {
 		return ""
 	}
@@ -50,7 +54,7 @@ func sanitizeHTML(s string) string {
 	nodes, _ := html.ParseFragment(strings.NewReader(s), ctx)
 	var b strings.Builder
 	for _, n := range nodes {
-		for _, c := range cleanNode(n) {
+		for _, c := range cleanNode(n, rules) {
 			_ = html.Render(&b, c)
 		}
 	}
@@ -61,7 +65,7 @@ func sanitizeHTML(s string) string {
 // node and its subtree are dropped), exactly one node (an allow-listed
 // element or text node), or several nodes (an unwrapped unknown element
 // replaced by its cleaned children).
-func cleanNode(n *html.Node) []*html.Node {
+func cleanNode(n *html.Node, rules map[string]string) []*html.Node {
 	switch n.Type {
 	case html.TextNode:
 		return []*html.Node{{Type: html.TextNode, Data: n.Data}}
@@ -77,7 +81,7 @@ func cleanNode(n *html.Node) []*html.Node {
 		return nil
 	}
 
-	kids := cleanChildren(n)
+	kids := cleanChildren(n, rules)
 
 	allowed, ok := allowedAttrs[tag]
 	if !ok {
@@ -106,6 +110,15 @@ func cleanNode(n *html.Node) []*html.Node {
 	}
 
 	if tag == "a" {
+		// Host rewrite piggybacks on the existing <a> pass — href only,
+		// and only after safeURL has judged the ORIGINAL value above, so
+		// a dropped href is never resurrected. src/poster/srcset/cite are
+		// deliberately untouched (image hosts, multi-URL syntax).
+		for i, a := range el.Attr {
+			if a.Key == "href" {
+				el.Attr[i].Val = rewriteLinkHost(a.Val, rules)
+			}
+		}
 		el.Attr = openLinkAttrs(el.Attr)
 	}
 
@@ -117,10 +130,10 @@ func cleanNode(n *html.Node) []*html.Node {
 
 // cleanChildren returns the flattened, cleaned children of n as a fresh
 // slice of detached nodes (no parent links), ready to be re-attached.
-func cleanChildren(n *html.Node) []*html.Node {
+func cleanChildren(n *html.Node, rules map[string]string) []*html.Node {
 	var out []*html.Node
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		out = append(out, cleanNode(c)...)
+		out = append(out, cleanNode(c, rules)...)
 	}
 	return out
 }
@@ -208,11 +221,11 @@ var dangerousScheme = map[string]bool{
 // our wider scheme policy (safeURL: deny only script/document schemes)
 // is what governs, then guard with {{if}} so an unsafe link is omitted
 // rather than rendered as a dead "#ZgotmplZ" anchor.
-func LinkURL(v string) template.URL {
+func LinkURL(v string, rules map[string]string) template.URL {
 	if v == "" || !safeURL(v) {
 		return ""
 	}
-	return template.URL(v)
+	return template.URL(rewriteLinkHost(v, rules))
 }
 
 // droppedSubtree are elements whose tag AND contents are removed — they

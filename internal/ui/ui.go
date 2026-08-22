@@ -55,6 +55,12 @@ type Server struct {
 	Overrides string // base config dir; "overrides/" is expected underneath
 	Secure    bool   // set Secure flag on session cookies (https deployments)
 
+	// LinkRewrite remaps outbound link HOSTS in the rendered UI only —
+	// entry-body <a href> values and the entry's own source link. Empty
+	// (the default) disables the transform entirely. See
+	// rewriteLinkHost and config.UIConfig.LinkRewrite.
+	LinkRewrite map[string]string
+
 	// Passkey, when non-nil and enabled, adds WebAuthn passkey login to
 	// the UI alongside the password. nil disables all passkey routes and
 	// hides the UI affordances.
@@ -1096,7 +1102,7 @@ func (s *Server) findEntry(op *store.OPML, hash string) (store.Entry, store.Feed
 // previous open-links-in-a-new-tab behaviour: every surviving <a> gets
 // target="_blank" rel="noopener noreferrer" unless the author already
 // set a target.
-func entryBody(e store.Entry) template.HTML {
+func entryBody(e store.Entry, rules map[string]string) template.HTML {
 	body := e.Content
 	// Some feeds (e.g. WordPress sites that publish a bare "Source" link
 	// as content:encoded) carry no real article body in Content — just a
@@ -1109,7 +1115,7 @@ func entryBody(e store.Entry) template.HTML {
 	// Entries enriched before the source link moved to the top are stored
 	// with it as a trailing footer; hoist at render time (disk content is
 	// left untouched). Runs pre-sanitize, while the marker class exists.
-	return template.HTML(sanitizeHTML(hoistSourceLink(body)))
+	return template.HTML(sanitizeHTML(hoistSourceLink(body), rules))
 }
 
 // entryDetailData is the render input for the entry-detail fragment,
@@ -1145,8 +1151,8 @@ func (s *Server) handleEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dd := entryDetailData{
-		Entry: e, Body: entryBody(e), Title: entryTitle(e),
-		SourceLink: LinkURL(e.Link), State: s.Store.EntryState(e.Hash),
+		Entry: e, Body: entryBody(e, s.LinkRewrite), Title: entryTitle(e),
+		SourceLink: LinkURL(e.Link, s.LinkRewrite), State: s.Store.EntryState(e.Hash),
 		FeedURL: f.XMLURL, FeedTitle: f.Title,
 	}
 	// panel=1 — render just the entry-detail fragment, no chrome.
@@ -1206,8 +1212,8 @@ func (s *Server) writeEntryStateOOB(w io.Writer, op *store.OPML, e store.Entry, 
 	_ = s.pages["feed"].ExecuteTemplate(w, "entryrow", row)
 	// 2. detail article (always emitted; htmx drops it when absent).
 	dd := entryDetailData{
-		Entry: e, Body: entryBody(e), Title: entryTitle(e),
-		SourceLink: LinkURL(e.Link), State: st,
+		Entry: e, Body: entryBody(e, s.LinkRewrite), Title: entryTitle(e),
+		SourceLink: LinkURL(e.Link, s.LinkRewrite), State: st,
 		FeedURL: f.XMLURL, FeedTitle: f.Title, OOB: true,
 	}
 	_ = s.pages["entry"].ExecuteTemplate(w, "entry-detail", dd)
