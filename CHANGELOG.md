@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.20.4] - 2026-08-22
+
 ### Added
 
 - **Web-UI link host rewriting** (`ui.link_rewrite` in `config.json`).
