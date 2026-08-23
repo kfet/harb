@@ -23,6 +23,33 @@ type Config struct {
 	Auth     auth.Config    `json:"auth"`
 	UI       UIConfig       `json:"ui"`
 	WebAuthn passkey.Config `json:"webauthn,omitempty"`
+
+	// LinkRewrite maps a link host to a replacement host for outbound
+	// links harb SERVES — the web UI's entry bodies and source links,
+	// and the <a href> values inside article bodies served by the
+	// Google Reader API. Empty by default: harb stays neutral and this
+	// is strictly opt-in. Canonical example:
+	//
+	//	"link_rewrite": {"x.com": "xcancel.com", "twitter.com": "xcancel.com"}
+	//
+	// Keys and values are bare hosts (no scheme, no path, no port).
+	// Junk entries are ignored at use rather than failing config load.
+	// A Reader item's `id` and `alternate[].href` are deliberately NOT
+	// rewritten: clients treat them as identity-adjacent (dedupe / read
+	// state). Nothing on disk is rewritten either — this is serve-time
+	// only, so removing the map restores the original links.
+	LinkRewrite map[string]string `json:"link_rewrite,omitempty"`
+}
+
+// EffectiveLinkRewrite returns the link-rewrite rules in force, falling
+// back to the deprecated UI-scoped map when the top-level one is unset.
+// The setting was UI-only in v0.20.4 and lives at the top level from
+// v0.20.5 on; existing configs keep working untouched.
+func (c Config) EffectiveLinkRewrite() map[string]string {
+	if len(c.LinkRewrite) == 0 {
+		return c.UI.LinkRewrite
+	}
+	return c.LinkRewrite
 }
 
 // UIConfig governs the web UI presentation.
@@ -30,17 +57,11 @@ type UIConfig struct {
 	Theme  string `json:"theme,omitempty"`
 	Secure bool   `json:"secure,omitempty"`
 
-	// LinkRewrite maps a link host to a replacement host for outbound
-	// links rendered by the WEB UI ONLY (entry bodies' <a href> and the
-	// entry's own source link). Empty by default — harb stays neutral;
-	// this is strictly opt-in. Canonical example:
-	//
-	//	"link_rewrite": {"x.com": "xcancel.com", "twitter.com": "xcancel.com"}
-	//
-	// Keys and values are bare hosts (no scheme, no path, no port).
-	// Junk entries are ignored at use rather than failing config load.
-	// The Reader API is deliberately NOT rewritten: native clients treat
-	// item URLs as identity-adjacent (dedupe / read state).
+	// LinkRewrite is the DEPRECATED UI-scoped spelling of the top-level
+	// Config.LinkRewrite; it was UI-only in v0.20.4. It is still honoured
+	// when the top-level map is unset (see Config.EffectiveLinkRewrite),
+	// but new configs should set `link_rewrite` at the top level, which
+	// also covers the Reader API's article bodies.
 	LinkRewrite map[string]string `json:"link_rewrite,omitempty"`
 }
 

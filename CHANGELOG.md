@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Link host rewriting now applies to Reader API article bodies.**
+  `link_rewrite` was web-UI-only in v0.20.4; the `<a href>` values
+  inside the item content served by `/reader/api/0/stream/contents` and
+  `/reader/api/0/stream/items/contents` are now rewritten too, so
+  native clients (Reeder, NetNewsWire, …) follow the same mirrors the
+  web UI does. The rewrite happens at **serve** time — stored NDJSON is
+  never modified, so removing the map restores the original links.
+  An item's `id` and `alternate[].href` are deliberately left alone:
+  clients treat them as identity, and changing them would resurface the
+  whole backlog as unread.
+
+  The Reader pass is a narrow, byte-faithful `<a href>`-only edit — no
+  parse-and-reserialise round trip — so content the Reader API promises
+  to serve verbatim stays verbatim; anything it cannot reproduce
+  exactly is served unchanged (fail open). Items with no candidate host
+  pay only a substring pre-screen, and a config with no rules pays
+  nothing at all.
+
+### Changed
+
+- **`link_rewrite` moved to the top level of `config.json`**, since it
+  is no longer UI-only. `ui.link_rewrite` is **deprecated** but still
+  honoured when the top-level map is absent, so existing deployments
+  keep working untouched — note that it now drives the Reader API as
+  well as the web UI.
+
 ## [0.20.4] - 2026-08-22
 
 ### Added

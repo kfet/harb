@@ -181,10 +181,12 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 	}
 	op := config.NewFileOPML(data)
 	mux := http.NewServeMux()
+	linkRules := cfg.EffectiveLinkRewrite()
 	readSrv := reader.New(st, as, op)
 	readSrv.Version = harb.Version
 	readSrv.Commit = harb.Commit
 	readSrv.BuildDate = harb.BuildDate
+	readSrv.LinkRewrite = linkRules
 	readHandler := readSrv.Routes(mux)
 	uiSrv, err := uipkg.New(st, as, op, cfg.UI.Theme, data)
 	if err != nil {
@@ -192,7 +194,7 @@ func cmdServe(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	uiSrv.Secure = cfg.UI.Secure
-	uiSrv.LinkRewrite = cfg.UI.LinkRewrite
+	uiSrv.LinkRewrite = linkRules
 	uiSrv.StaticVer = harb.Commit
 	uiSrv.Version = harb.Version
 	uiSrv.ConfigPath = cfgPath

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/kfet/harb/internal/auth"
+	"github.com/kfet/harb/internal/linkrewrite"
 	"github.com/kfet/harb/internal/store"
 )
 
@@ -50,6 +51,13 @@ type Server struct {
 	Version   string
 	Commit    string
 	BuildDate string
+
+	// LinkRewrite remaps link HOSTS inside the article bodies served by
+	// stream/contents and stream/items/contents. Empty by default (and
+	// then entirely free — see linkrewrite.Anchors). Item `id` and
+	// `alternate[].href` are never rewritten, and nothing on disk is
+	// touched: this is a serve-time transform only.
+	LinkRewrite map[string]string
 }
 
 // errAbortUpdate is a sentinel returned from an OPML.Update closure to
@@ -770,6 +778,7 @@ func (s *Server) toStreamItems(es []store.Entry, op *store.OPML) []streamItem {
 		if body == "" {
 			body = e.Summary
 		}
+		body = linkrewrite.Anchors(body, s.LinkRewrite)
 		out = append(out, streamItem{
 			ID:            itemID(e.Hash),
 			LongID:        itemLongID(e.Hash),

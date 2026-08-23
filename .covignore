@@ -70,10 +70,10 @@ github.com/kfet/harb/internal/ui/passkey.go:166\.16,167\.40
 # so the handler skips ETag handling and serves a normal 200 — i.e. the
 # fallback is a correctness no-op, not a behaviour to assert. applyETag
 # has the same degrade-to-no-op branch on empty etag.
-github.com/kfet/harb/internal/reader/reader.go:1013\.16,1017\.3
-github.com/kfet/harb/internal/reader/reader.go:1026\.14,1028\.3
-github.com/kfet/harb/internal/reader/reader.go:1038\.14,1040\.3
-github.com/kfet/harb/internal/reader/reader.go:1050\.16,1052\.3
+github.com/kfet/harb/internal/reader/reader.go:1022\.16,1026\.3
+github.com/kfet/harb/internal/reader/reader.go:1035\.14,1037\.3
+github.com/kfet/harb/internal/reader/reader.go:1047\.14,1049\.3
+github.com/kfet/harb/internal/reader/reader.go:1059\.16,1061\.3
 
 # webflow-to-feed: goquery.NewDocumentFromReader only errors when the
 # underlying io.Reader errors. The body is always wrapped in a

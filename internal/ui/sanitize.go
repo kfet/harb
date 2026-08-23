@@ -6,6 +6,8 @@ import (
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
+
+	"github.com/kfet/harb/internal/linkrewrite"
 )
 
 // sanitizeHTML cleans untrusted feed HTML for safe rendering in the web
@@ -39,7 +41,7 @@ import (
 // stdlib-mostly constraint intact.
 //
 // rules is the optional view-layer link-host rewrite map (see
-// rewriteLinkHost): surviving <a href> values — and only those — have
+// linkrewrite.Host): surviving <a href> values — and only those — have
 // their host remapped after the safety check.
 func sanitizeHTML(s string, rules map[string]string) string {
 	if s == "" {
@@ -116,7 +118,7 @@ func cleanNode(n *html.Node, rules map[string]string) []*html.Node {
 		// deliberately untouched (image hosts, multi-URL syntax).
 		for i, a := range el.Attr {
 			if a.Key == "href" {
-				el.Attr[i].Val = rewriteLinkHost(a.Val, rules)
+				el.Attr[i].Val = linkrewrite.Host(a.Val, rules)
 			}
 		}
 		el.Attr = openLinkAttrs(el.Attr)
@@ -225,7 +227,7 @@ func LinkURL(v string, rules map[string]string) template.URL {
 	if v == "" || !safeURL(v) {
 		return ""
 	}
-	return template.URL(rewriteLinkHost(v, rules))
+	return template.URL(linkrewrite.Host(v, rules))
 }
 
 // droppedSubtree are elements whose tag AND contents are removed — they

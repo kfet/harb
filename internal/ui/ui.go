@@ -55,10 +55,11 @@ type Server struct {
 	Overrides string // base config dir; "overrides/" is expected underneath
 	Secure    bool   // set Secure flag on session cookies (https deployments)
 
-	// LinkRewrite remaps outbound link HOSTS in the rendered UI only —
+	// LinkRewrite remaps outbound link HOSTS rendered by the web UI —
 	// entry-body <a href> values and the entry's own source link. Empty
 	// (the default) disables the transform entirely. See
-	// rewriteLinkHost and config.UIConfig.LinkRewrite.
+	// linkrewrite.Host and config.Config.LinkRewrite; the Reader API
+	// applies the same rules to its served article bodies.
 	LinkRewrite map[string]string
 
 	// Passkey, when non-nil and enabled, adds WebAuthn passkey login to

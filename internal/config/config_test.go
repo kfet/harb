@@ -377,6 +377,66 @@ func TestLinkRewriteRoundTrip(t *testing.T) {
 	}
 }
 
+// TestEffectiveLinkRewrite pins the top-level `link_rewrite` map plus
+// its one-line back-compat fallback to the deprecated `ui.link_rewrite`
+// spelling. Live deployments configured before v0.20.5 carry the map
+// under `ui`, so the fallback is load-bearing, not decorative.
+func TestEffectiveLinkRewrite(t *testing.T) {
+	dir := t.TempDir()
+
+	// Top-level round trip through Save→Load.
+	p := filepath.Join(dir, "top.json")
+	c := Default()
+	c.LinkRewrite = map[string]string{"x.com": "xcancel.com"}
+	if err := Save(p, c); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.EffectiveLinkRewrite()["x.com"] != "xcancel.com" {
+		t.Fatalf("top-level round trip: %+v", got)
+	}
+
+	// Legacy ui.link_rewrite only → used as the effective map.
+	legacy := filepath.Join(dir, "legacy.json")
+	if err := os.WriteFile(legacy, []byte(`{"ui":{"link_rewrite":{"x.com":"old.example"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l, err := Load(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.EffectiveLinkRewrite()["x.com"] != "old.example" {
+		t.Fatalf("ui fallback: %+v", l)
+	}
+
+	// Both set → top level wins outright (no merging).
+	both := filepath.Join(dir, "both.json")
+	if err := os.WriteFile(both, []byte(
+		`{"link_rewrite":{"x.com":"new.example"},"ui":{"link_rewrite":{"x.com":"old.example","twitter.com":"old.example"}}}`,
+	), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b, err := Load(both)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eff := b.EffectiveLinkRewrite()
+	if eff["x.com"] != "new.example" {
+		t.Fatalf("top level must win: %+v", eff)
+	}
+	if _, ok := eff["twitter.com"]; ok {
+		t.Fatalf("maps must not be merged: %+v", eff)
+	}
+
+	// Neither set → empty, so a zero-config deployment rewrites nothing.
+	if len(Default().EffectiveLinkRewrite()) != 0 {
+		t.Fatal("default must have no rules")
+	}
+}
+
 // TestFileOPMLEnsureLoadedContended pins ensureLoaded's double-checked
 // early return: a caller that passed the read-locked fast check while
 // the state was still empty, then blocked on the write lock behind the

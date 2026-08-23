@@ -148,14 +148,12 @@ can register several (e.g. laptop + phone).
 
 ### Link host rewriting
 
-The web UI can send outbound links through a front-end mirror by
-remapping their **host**. Off by default; opt in with a `link_rewrite`
-map under `ui` in `config.json`:
+harb can send outbound links through a front-end mirror by remapping
+their **host**. Off by default; opt in with a top-level `link_rewrite`
+map in `config.json`:
 
 ```json
-"ui": {
-  "link_rewrite": {"x.com": "xcancel.com", "twitter.com": "xcancel.com"}
-}
+"link_rewrite": {"x.com": "xcancel.com", "twitter.com": "xcancel.com"}
 ```
 
 Keys and values are bare hosts (no scheme, path or port); entries that
@@ -164,12 +162,29 @@ case-insensitive and covers `www.` and subdomains (so
 `mobile.twitter.com` follows `twitter.com`). Only the host is replaced —
 scheme, port, path, query and fragment survive.
 
-Scope is deliberately narrow: it applies to links in the **web UI only**
-(entry-body anchors and the entry's own source link), never to `img`
-sources or other media, and never to item URLs served over the Reader
-API — native clients treat those as identity for dedupe and read state.
-The map is applied exactly once per URL, so a mutually recursive map
-can't loop. Unsafe links dropped by the sanitizer stay dropped.
+It applies to the links you follow while reading, on **both** front
+doors:
+
+- the **web UI** — entry-body anchors and the entry's own source link;
+- the **Google Reader API** — anchors inside the article body served by
+  `stream/contents` and `stream/items/contents`, so native clients
+  (Reeder, NetNewsWire, …) get the mirrored links too.
+
+It never applies to `img` sources or other media, and never to a Reader
+item's `id` or `alternate[].href` — clients treat those as identity for
+dedupe and read state, so rewriting them would resurface your whole
+backlog as unread. The map is applied exactly once per URL, so a
+mutually recursive map can't loop. Unsafe links dropped by the web UI
+sanitizer stay dropped.
+
+Rewriting happens when content is **served**, never on disk: removing
+the map restores the publisher's original links immediately. Items your
+client has already cached keep their old links until it refetches them.
+
+> The v0.20.4 spelling `ui.link_rewrite` is **deprecated** but still
+> honoured: it is used when the top-level `link_rewrite` is absent.
+> Note that the UI-scoped map now also drives the Reader API — move it
+> to the top level when convenient.
 
 ## Storage layout
 

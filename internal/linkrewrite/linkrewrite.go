@@ -1,4 +1,15 @@
-package ui
+// Package linkrewrite implements harb's opt-in host→host link rewriting.
+//
+// It is shared by the two surfaces that serve article links: the web UI
+// (internal/ui — sanitizer <a href> pass and the entry's own source
+// link) and the Google Reader API (internal/reader — anchors inside the
+// served item body). Both take their rules from the same resolved
+// configuration value (Config.LinkRewrite, see internal/config).
+//
+// Host is the pure host-mapping primitive; Anchors is the byte-faithful
+// <a href>-only pass used where content must otherwise be served
+// verbatim.
+package linkrewrite
 
 import (
 	"net"
@@ -6,8 +17,8 @@ import (
 	"strings"
 )
 
-// rewriteLinkHost remaps the HOST of an outbound link through the
-// configured host→host rules ([ui] link_rewrite in config.json),
+// Host remaps the HOST of an outbound link through the
+// configured host→host rules (link_rewrite in config.json),
 // returning raw unchanged when no rule applies.
 //
 // Why: some sites are unusable (or hostile) when followed directly —
@@ -15,11 +26,14 @@ import (
 // mirror such as xcancel.com. The map is empty by default, so harb
 // itself stays neutral; enabling it is an explicit operator choice.
 //
-// Scope is deliberately narrow — this is a VIEW-LAYER transform only:
+// Scope is deliberately narrow — this is a SERVE-LAYER transform only,
+// applied to rendered/served link values and never to stored data:
 //
-//   - it runs on the web UI's <a href> values and on the entry's own
-//     source link (LinkURL); never on the Reader API's item URLs, which
-//     native clients treat as identity-adjacent (dedupe / read state);
+//   - it runs on the web UI's <a href> values, on the entry's own
+//     source link (LinkURL), and on <a href> values inside the article
+//     body the Reader API serves; never on a Reader item's `id` or
+//     `alternate[].href`, which native clients treat as
+//     identity-adjacent (dedupe / read state);
 //   - never on src / poster / srcset / cite — rewriting an image host
 //     breaks the image, and srcset is multi-URL syntax;
 //   - it runs AFTER the sanitizer's scheme/safety check, which judges
@@ -51,7 +65,7 @@ import (
 // Junk rules (empty, or carrying a scheme, path, port, whitespace…)
 // are ignored here rather than failing the whole config load: a typo in
 // one entry must not take the server down.
-func rewriteLinkHost(raw string, rules map[string]string) string {
+func Host(raw string, rules map[string]string) string {
 	if raw == "" || len(rules) == 0 {
 		return raw
 	}
@@ -84,7 +98,7 @@ func rewriteLinkHost(raw string, rules map[string]string) string {
 }
 
 // lookupHostRule resolves host against rules, applying exact, www.- and
-// suffix matching in that order (see rewriteLinkHost). It returns the
+// suffix matching in that order (see Host). It returns the
 // replacement host and whether any rule matched.
 func lookupHostRule(host string, rules map[string]string) (string, bool) {
 	h := strings.ToLower(host)
