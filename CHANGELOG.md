@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.20.5] - 2026-08-23
+
 ### Added
 
 - **Link host rewriting now applies to Reader API article bodies.**
