@@ -1,5 +1,10 @@
 .PHONY: all build build-matrix build-linux-amd64 build-linux-arm64 build-linux-armv6 build-darwin-amd64 build-darwin-arm64 fmt vet lint-frontend run-tests open_coverage clean e2e release-local _all
 
+# Coverage gate. Pinned as a `tool` directive in go.mod (`go get -tool`), so the
+# version is tracked there rather than inline here.
+COVGATE := go tool covgate
+
+
 # Version metadata baked into the binary at link time. Override on the
 # command line for reproducible release builds: `make build VERSION=v0.1.1`.
 VERSION    ?= $(shell cat VERSION 2>/dev/null || echo dev)
@@ -107,7 +112,7 @@ lint-frontend:
 run-tests:
 	@go clean -testcache
 	$(call RUN,tests pass,go test -race -shuffle=on -cover ./... -coverprofile=coverage.tmp.out)
-	$(call RUN,coverage clean,go run github.com/kfet/covgate/cmd/covgate@v0.1.0 -profile=coverage.tmp.out -out=coverage.out -ignore=.covignore -min=100)
+	$(call RUN,coverage clean,$(COVGATE) -profile=coverage.tmp.out -out=coverage.out -ignore=.covignore -min=100)
 	@rm -f coverage.tmp.out
 
 open_coverage:
