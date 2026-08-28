@@ -152,6 +152,15 @@ a `tokens.json` file (small, easy to inspect).
   Must pass before any commit. **Do not weaken this gate** to make
   tests pass — instead, add a `.covignore` entry with a justifying
   comment, or write the test.
+- **`.covignore` entries are pinned to absolute line numbers** (e.g.
+  `reader.go:1059\.16,1061\.3`), so *any* edit that shifts lines in an
+  already-ignored file — even a comment — makes the gate report those
+  same, already-justified lines as newly uncovered. If `make all` fails
+  with `uncovered:` in a file that already has `.covignore` entries,
+  the fix is almost always to **re-anchor the existing entries** to the
+  new line numbers, not to add a duplicate entry or write a redundant
+  test. Re-derive them from the `uncovered:` output and check the count
+  of entries for that file stays the same.
 - Add a `## [Unreleased]` entry in `CHANGELOG.md` for every
   user-visible change.
 - Update `README.md` and this file when scope or storage layout
