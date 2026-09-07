@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.21.2] - 2026-09-07
+
 ### Security
 
 - **`install.sh` now rejects a malformed `VERSION` before it downloads
