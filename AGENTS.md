@@ -163,6 +163,11 @@ a `tokens.json` file (small, easy to inspect).
   new line numbers, not to add a duplicate entry or write a redundant
   test. Re-derive them from the `uncovered:` output and check the count
   of entries for that file stays the same.
+- `install.sh` is **generated** from `install.sh.json` by distkit — never
+  edit it by hand. Run `make install.sh` after changing the spec **or
+  after bumping `github.com/kfet/distkit`** (a new template version
+  changes the output); `make check-installsh` and
+  `TestInstallShIsNotDrifted` fail the build on drift.
 - Add a `## [Unreleased]` entry in `CHANGELOG.md` for every
   user-visible change.
 - Update `README.md` and this file when scope or storage layout

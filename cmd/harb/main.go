@@ -528,7 +528,13 @@ func cmdHashpass(args []string, stdout, stderr io.Writer) int {
 // naming has exactly one definition.
 //
 // stdout/stderr and args are injected so the subcommand is testable.
+// A nil args slice would make distkit fall back to os.Args[2:], which is
+// wrong for any caller that is not the real dispatch, so it is normalised
+// to empty here.
 func updateConfig(args []string, stdout, stderr io.Writer) distkit.Config {
+	if args == nil {
+		args = []string{}
+	}
 	return distkit.Config{
 		Repo:          "kfet/harb",
 		Binary:        "harb",
@@ -539,7 +545,7 @@ func updateConfig(args []string, stdout, stderr io.Writer) distkit.Config {
 		// as "armv6", and install.sh.json says the same thing.
 		ArmSuffix:   "armv6",
 		Version:     harb.Version,
-		RestartHint: "systemctl --user restart harb   (macOS: launchctl kickstart -k gui/$UID/dev.<user>.harb)",
+		RestartHint: "systemctl --user restart harb",
 		Args:        args,
 		Stdout:      stdout,
 		Stderr:      stderr,

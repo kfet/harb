@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **`harb update -check` now exits 3 when an update is available** (0 = up
+  to date, 1 = failed or refused, 2 = bad flags). Scripts that treat any
+  non-zero exit from `-check` as a failure need updating.
+
 - **Self-update and `install.sh` now come from
   [distkit](https://github.com/kfet/distkit)**, the shared distribution
   module, replacing the hand-written `internal/selfupdate` package and
@@ -22,13 +26,10 @@ All notable changes to this project will be documented in this file.
     token`), so a rate-limited or private-repo host works;
   - the download has a **stall timeout** instead of a 60 s total
     deadline, so a slow Pi link no longer aborts a valid update;
-  - a `dev` build refuses to self-update over itself;
+  - a build stamped `dev`/`unknown` (no release tag to compare against)
+    refuses to self-update over itself;
   - `harb update -restart-cmd '<sh>'` recycles the service after a
     successful swap, and a recycle hint is printed otherwise.
-
-  **`harb update -check` now exits 3 when an update is available** (0 =
-  up to date, 1 = failed/refused, 2 = bad flags). Scripts that treated
-  any non-zero exit as failure need updating.
 
   Asset naming (`harb-<version>-<os>-<arch>.tar.gz`, 32-bit ARM as
   `armv6`) is unchanged and now has a single definition shared by the

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/kfet/distkit"
@@ -98,6 +99,20 @@ type fakeRelease struct {
 	*httptest.Server
 	tag    string
 	assets map[string][]byte
+
+	mu   sync.Mutex
+	seen []string // request paths, for asserting which asset was fetched
+}
+
+func (f *fakeRelease) requested(name string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, p := range f.seen {
+		if strings.HasSuffix(p, "/"+name) {
+			return true
+		}
+	}
+	return false
 }
 
 func newFakeRelease(t *testing.T, tag string, assets map[string][]byte) *fakeRelease {
@@ -106,6 +121,9 @@ func newFakeRelease(t *testing.T, tag string, assets map[string][]byte) *fakeRel
 	// Unstarted, so f.Server (and therefore f.URL) is set before the first
 	// request goroutine reads it.
 	f.Server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.seen = append(f.seen, r.URL.Path)
+		f.mu.Unlock()
 		name := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
 		if data, ok := f.assets[name]; ok {
 			_, _ = w.Write(data)
@@ -299,13 +317,12 @@ func TestUpdateCheckOnly(t *testing.T) {
 	}
 }
 
-// TestUpdateRefusesManagedInstall: a binary in a directory owned by another
-// user must be refused up front with a hint, not fail with EPERM after three
-// network round-trips. Skipped as root, where every directory is writable.
+// TestUpdateRefusesManagedInstall: a binary under a package-manager prefix
+// must be refused up front — before any network round-trip — with the advice
+// to use that package manager. (The sibling ownership guard, for a directory
+// belonging to another user, cannot be fabricated without root and is covered
+// upstream in distkit.)
 func TestUpdateRefusesManagedInstall(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root can write anywhere")
-	}
 	var out, errOut bytes.Buffer
 	cfg := updateConfig([]string{}, &out, &errOut)
 	cfg.Version, cfg.DisableBrew = "v0.1.0", true
@@ -418,5 +435,125 @@ func TestInstallShMapsArmSpellings(t *testing.T) {
 	}
 	if !strings.Contains(s, "armv6") {
 		t.Error("install.sh does not name the armv6 asset")
+	}
+}
+
+// TestUpdateRunsInstallsPinnedVersion: `-version` installs the pinned release,
+// with or without a leading v, and reports success.
+func TestUpdateInstallsPinnedVersion(t *testing.T) {
+	const tag = "v99.0.0"
+	asset := releaseAssetName(tag, runtime.GOOS, runtime.GOARCH)
+	assets := map[string][]byte{asset: harbTarball(t, tag, "#!/bin/sh\necho pinned\n")}
+	assets["checksums.txt"] = checksumsFor(assets)
+	srv := newFakeRelease(t, tag, assets)
+
+	for _, spelling := range []string{tag, strings.TrimPrefix(tag, "v")} {
+		dir := t.TempDir()
+		exe := filepath.Join(dir, "harb")
+		if err := os.WriteFile(exe, []byte("old binary\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		var out, errOut bytes.Buffer
+		cfg := updateConfig([]string{"-version", spelling}, &out, &errOut)
+		cfg.APIBase, cfg.Version, cfg.DisableBrew = srv.URL, "v0.1.0", true
+		cfg.ExecPath = func() (string, error) { return exe, nil }
+		if code := distkit.Main(cfg); code != 0 {
+			t.Fatalf("-version %s exited %d\n%s%s", spelling, code, out.String(), errOut.String())
+		}
+		if got, _ := os.ReadFile(exe); string(got) != "#!/bin/sh\necho pinned\n" {
+			t.Errorf("-version %s did not install the pinned release: %q", spelling, got)
+		}
+	}
+}
+
+// TestUpdateRejectsUnlistedAsset: a release whose checksums.txt has no entry
+// for our asset — what a half-broken release workflow publishes — must abort
+// rather than install unverified bytes.
+func TestUpdateRejectsUnlistedAsset(t *testing.T) {
+	const tag = "v99.0.0"
+	asset := releaseAssetName(tag, runtime.GOOS, runtime.GOARCH)
+	assets := map[string][]byte{
+		asset:           harbTarball(t, tag, "#!/bin/sh\necho new\n"),
+		"checksums.txt": []byte(strings.Repeat("a", 64) + "  harb-0.0.0-nope-nope.tar.gz\n"),
+	}
+	srv := newFakeRelease(t, tag, assets)
+
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "harb")
+	if err := os.WriteFile(exe, []byte("old binary\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	cfg := updateConfig([]string{}, &out, &errOut)
+	cfg.APIBase, cfg.Version, cfg.DisableBrew = srv.URL, "v0.1.0", true
+	cfg.ExecPath = func() (string, error) { return exe, nil }
+
+	if code := distkit.Main(cfg); code != 1 {
+		t.Fatalf("exit %d, want 1\n%s%s", code, out.String(), errOut.String())
+	}
+	if got, _ := os.ReadFile(exe); string(got) != "old binary\n" {
+		t.Errorf("binary replaced without a checksum entry: %q", got)
+	}
+}
+
+// TestCmdUpdateDispatch pins the wiring the migration added: `harb update …`
+// reaches distkit with the arguments that followed the subcommand word, and
+// not with the test binary's own flags.
+func TestCmdUpdateDispatch(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := run([]string{"update", "-not-a-flag"}, &out, &errOut); code != 2 {
+		t.Errorf("harb update -not-a-flag exited %d, want 2\n%s", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "not-a-flag") {
+		t.Errorf("the flag error must name the offending flag:\n%s", errOut.String())
+	}
+	errOut.Reset()
+	if code := run([]string{"update", "-h"}, &out, &errOut); code != 0 {
+		t.Errorf("harb update -h exited %d, want 0", code)
+	}
+	if !strings.Contains(errOut.String(), "-restart-cmd") {
+		t.Errorf("help does not list the distkit flags:\n%s", errOut.String())
+	}
+}
+
+// TestInstallShMapsArmUnameToArmv6 runs the generated installer on a host
+// pretending to be a 32-bit Pi: `uname -m` says armv7l, and the asset it must
+// fetch is the single armv6 tarball harb publishes. This is the arch mapping
+// the Raspberry Pi fleet depends on.
+func TestInstallShMapsArmUnameToArmv6(t *testing.T) {
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl not available")
+	}
+	const tag = "v99.0.0"
+	for _, uname := range []string{"armv6l", "armv7l", "armv8l"} {
+		t.Run(uname, func(t *testing.T) {
+			asset := releaseAssetName(tag, "linux", "arm")
+			if !strings.Contains(asset, "armv6") {
+				t.Fatalf("asset %q does not name armv6", asset)
+			}
+			assets := map[string][]byte{asset: []byte("not a real tarball")}
+			assets["checksums.txt"] = checksumsFor(assets)
+			srv := newFakeRelease(t, tag, assets)
+
+			// A fake uname earlier on PATH than the real one.
+			shim := t.TempDir()
+			script := fmt.Sprintf("#!/bin/sh\ncase \"$1\" in -s) echo Linux ;; -m) echo %s ;; *) echo Linux ;; esac\n", uname)
+			if err := os.WriteFile(filepath.Join(shim, "uname"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			cmd := exec.Command("sh", "../../install.sh")
+			cmd.Env = append(os.Environ(),
+				"PATH="+shim+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"GITHUB_API="+srv.URL, "GITHUB_HOST="+srv.URL,
+				"BIN_DIR="+t.TempDir(), "GITHUB_TOKEN=", "OS=", "ARCH=", "PREFIX=")
+			// The payload is not a real tarball, so the install fails at
+			// extraction — after it has asked for an asset by name, which is
+			// the thing under test.
+			out, _ := cmd.CombinedOutput()
+			if !srv.requested(asset) {
+				t.Errorf("uname -m = %s did not fetch %s\n%s", uname, asset, out)
+			}
+		})
 	}
 }

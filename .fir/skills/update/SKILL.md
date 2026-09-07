@@ -67,7 +67,7 @@ the unit, not `which harb`.
 **(a) `harb update` — selfupdate, the default path:**
 
 ```bash
-ssh <host> 'harb update -check'        # prints current vs latest; exit 3 = update available
+ssh <host> 'harb update -check; echo rc=$?'   # rc=3 → update available, rc=0 → up to date
 ssh <host> 'harb update'               # downloads + atomic-replaces the binary
 ```
 
