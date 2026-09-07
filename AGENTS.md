@@ -133,7 +133,9 @@ a `tokens.json` file (small, easy to inspect).
 ## Constraints
 
 - **Stdlib-mostly.** The acceptable third-party dependencies right now
-  are `github.com/mmcdole/gofeed` for feed parsing and
+  are `github.com/kfet/distkit` for self-update + `install.sh`
+  generation (stdlib-only, zero transitive deps),
+  `github.com/mmcdole/gofeed` for feed parsing and
   `github.com/kfet/pinopass` for WebAuthn/passkey verification (itself
   stdlib-only, zero transitive deps). **All other dependencies require
   an aside-advisor escalation first.**

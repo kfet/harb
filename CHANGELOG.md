@@ -4,6 +4,39 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Self-update and `install.sh` now come from
+  [distkit](https://github.com/kfet/distkit)**, the shared distribution
+  module, replacing the hand-written `internal/selfupdate` package and
+  the hand-written installer. Behaviour gained, none lost:
+
+  - a **Homebrew** install is now *upgraded* via `brew upgrade
+    kfet/tap/harb` (resolved from the keg's install receipt) instead of
+    only being refused;
+  - an install directory owned by another user is refused **up front**
+    with the right advice (`sudo harb update`) rather than failing with
+    `permission denied` after the download;
+  - release lookups and asset downloads go through the GitHub REST API
+    with a discovered token (`GITHUB_TOKEN`, `GH_TOKEN`, `gh auth
+    token`), so a rate-limited or private-repo host works;
+  - the download has a **stall timeout** instead of a 60 s total
+    deadline, so a slow Pi link no longer aborts a valid update;
+  - a `dev` build refuses to self-update over itself;
+  - `harb update -restart-cmd '<sh>'` recycles the service after a
+    successful swap, and a recycle hint is printed otherwise.
+
+  **`harb update -check` now exits 3 when an update is available** (0 =
+  up to date, 1 = failed/refused, 2 = bad flags). Scripts that treated
+  any non-zero exit as failure need updating.
+
+  Asset naming (`harb-<version>-<os>-<arch>.tar.gz`, 32-bit ARM as
+  `armv6`) is unchanged and now has a single definition shared by the
+  binary and `install.sh` (`install.sh.json`). `install.sh` is
+  generated: run `make install.sh` after editing the spec; `make
+  check-installsh` (part of `make all`) fails on drift. `PREFIX=` keeps
+  working as a legacy alias for `BIN_DIR=$PREFIX/bin`.
+
 ## [0.20.5] - 2026-08-23
 
 ### Added

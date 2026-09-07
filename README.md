@@ -62,10 +62,17 @@ writable). Supports `linux/amd64`, `linux/arm64`, `linux/armv6`
 target version with `VERSION=v0.1.0` or the install prefix with
 `PREFIX=$HOME/.local`.
 
-Once installed, `harb update` will pull the latest release in
-place — except when the binary is owned by a package manager (Homebrew,
-apt), in which case it'll tell you to use that instead. `harb
-update -check` reports without installing.
+`install.sh` is generated from `install.sh.json` by
+[distkit](https://github.com/kfet/distkit); `BIN_DIR=` is the current
+spelling and `PREFIX=` is kept as a legacy alias for `$PREFIX/bin`.
+
+Once installed, `harb update` will pull the latest release in place —
+verifying its sha256 against `checksums.txt` and swapping the binary
+atomically. A Homebrew install is upgraded through `brew upgrade`
+instead, and an install owned by another package manager (or by another
+user) is refused up front with the command to use instead. `harb update
+-check` reports without installing, and exits **3** when a newer release
+exists (0 when up to date), so a timer can act on the exit code.
 
 **From source:**
 

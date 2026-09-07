@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/PuerkitoBio/goquery v1.8.0
+	github.com/kfet/distkit v0.1.0
 	github.com/kfet/pinopass v0.1.0
 	github.com/mmcdole/gofeed v1.3.0
 	golang.org/x/net v0.55.0

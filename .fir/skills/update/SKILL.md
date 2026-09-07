@@ -67,12 +67,17 @@ the unit, not `which harb`.
 **(a) `harb update` — selfupdate, the default path:**
 
 ```bash
-ssh <host> 'harb update -check'        # prints current vs latest
+ssh <host> 'harb update -check'        # prints current vs latest; exit 3 = update available
 ssh <host> 'harb update'               # downloads + atomic-replaces the binary
 ```
 
-The `selfupdate` package writes to the same path as the running
-binary. After a successful update, restart the supervisor (the running
+Self-update is implemented by [distkit](https://github.com/kfet/distkit)
+and writes to the same path as the running binary. Note the exit codes:
+`-check` exits **3** when an update is available, 0 when up to date, 1 on
+failure/refusal — a non-zero exit from `-check` is not necessarily an
+error. A brew-managed install is upgraded via `brew upgrade` by `harb
+update` itself; an install owned by another user is refused up front with
+the command to use instead. After a successful update, restart the supervisor (the running
 process still holds the old binary in memory):
 
 ```bash

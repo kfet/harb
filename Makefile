@@ -1,4 +1,4 @@
-.PHONY: all build build-matrix build-linux-amd64 build-linux-arm64 build-linux-armv6 build-darwin-amd64 build-darwin-arm64 fmt vet lint-frontend run-tests open_coverage clean e2e release-local _all
+.PHONY: all build build-matrix build-linux-amd64 build-linux-arm64 build-linux-armv6 build-darwin-amd64 build-darwin-arm64 fmt vet lint-frontend run-tests open_coverage clean e2e release-local check-installsh _all
 
 # Coverage gate. Pinned as a `tool` directive in go.mod (`go get -tool`), so the
 # version is tracked there rather than inline here.
@@ -46,7 +46,7 @@ all:
 
 # Internal aggregate target — every prereq is independent and self-
 # contained, so `make -j` can fan them out.
-_all: build build-matrix fmt vet lint-frontend run-tests e2e
+_all: build build-matrix fmt vet lint-frontend run-tests e2e check-installsh
 
 # Build the harb binary into ./harb. Standalone target so a plain
 # `go build` failure is caught by `make all` without needing the e2e
@@ -114,6 +114,17 @@ run-tests:
 	$(call RUN,tests pass,go test -race -shuffle=on -cover ./... -coverprofile=coverage.tmp.out)
 	$(call RUN,coverage clean,$(COVGATE) -profile=coverage.tmp.out -out=coverage.out -ignore=.covignore -min=100)
 	@rm -f coverage.tmp.out
+
+# install.sh is GENERATED from install.sh.json by the shared distkit
+# template — the same spec the binary self-updates with, so asset naming
+# has one definition. Regenerate after editing install.sh.json.
+install.sh: install.sh.json
+	$(call RUN,generate install.sh,go run github.com/kfet/distkit/cmd/distkit-installsh -o $@)
+
+# Dev-only drift gate: fails when the checked-in install.sh no longer
+# matches what the template would produce. Never runs on a user machine.
+check-installsh:
+	$(call RUN,install.sh not drifted,go run github.com/kfet/distkit/cmd/distkit-installsh -check)
 
 open_coverage:
 	go tool cover -html=coverage.out

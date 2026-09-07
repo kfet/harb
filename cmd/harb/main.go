@@ -9,7 +9,7 @@
 //	harb poll-once [-data DIR]
 //	harb hashpass PASSWORD
 //	harb passwd [-data DIR] [-password NEW]
-//	harb update [-check] [-version vX.Y.Z]
+//	harb update [-check] [-version vX.Y.Z] [-repo OWNER/NAME] [-restart-cmd SH]
 //	harb version
 package main
 
@@ -28,6 +28,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kfet/distkit"
 	"github.com/kfet/harb"
 	"github.com/kfet/harb/internal/accesslog"
 	"github.com/kfet/harb/internal/auth"
@@ -37,7 +38,6 @@ import (
 	"github.com/kfet/harb/internal/poll"
 	"github.com/kfet/harb/internal/poll/observe"
 	"github.com/kfet/harb/internal/reader"
-	"github.com/kfet/harb/internal/selfupdate"
 	"github.com/kfet/harb/internal/store"
 	uipkg "github.com/kfet/harb/internal/ui"
 )
@@ -93,7 +93,8 @@ usage:
   harb migrate   --identity [--dry-run] [-data DIR]
   harb hashpass  PASSWORD
   harb passwd    [-data DIR] [-password NEW]
-  harb update    [-check] [-version vX.Y.Z]
+  harb update    [-check] [-version vX.Y.Z] [-repo OWNER/NAME]
+                     [-restart-cmd SH]
   harb version
 
 bootstrap:
@@ -518,27 +519,43 @@ func cmdHashpass(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// updateConfig is the single definition of how harb is distributed:
+// release assets are tarballs named
+// harb-<version-without-v>-<os>-<arch>.tar.gz containing
+// harb-<version>-<os>-<arch>/harb, 32-bit ARM is published as armv6,
+// and checksums.txt carries the sha256 manifest. install.sh.json is
+// derived from the same shape (see installsh.FromConfig), so asset
+// naming has exactly one definition.
+//
+// stdout/stderr and args are injected so the subcommand is testable.
+func updateConfig(args []string, stdout, stderr io.Writer) distkit.Config {
+	return distkit.Config{
+		Repo:          "kfet/harb",
+		Binary:        "harb",
+		AssetStem:     "harb",
+		AssetTemplate: "{stem}-{version_no_v}-{os}-{arch}.tar.gz",
+		// Explicit rather than relying on the distkit default: harb's
+		// release matrix builds 32-bit ARM at GOARM=6 and publishes it
+		// as "armv6", and install.sh.json says the same thing.
+		ArmSuffix:   "armv6",
+		Version:     harb.Version,
+		RestartHint: "systemctl --user restart harb   (macOS: launchctl kickstart -k gui/$UID/dev.<user>.harb)",
+		Args:        args,
+		Stdout:      stdout,
+		Stderr:      stderr,
+	}
+}
+
+// cmdUpdate is `harb update`, implemented entirely by distkit: resolve
+// the release through the GitHub API, verify sha256 against
+// checksums.txt, unpack the tarball, and atomically swap the running
+// binary. A Homebrew install is upgraded through brew rather than
+// self-updated; an install harb does not own is refused up front.
+//
+// Exit codes: 0 success or already up to date, 1 failed/refused,
+// 2 bad flags, 3 a `-check` run that found a different release.
 func cmdUpdate(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("update", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	check := fs.Bool("check", false, "report whether an update is available, do not install")
-	ver := fs.String("version", "", "install a specific version (e.g. v0.2.0); default: latest")
-	repo := fs.String("repo", selfupdate.DefaultRepo, "github owner/repo to update from")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	err := selfupdate.Run(harb.Version, selfupdate.Options{
-		Repo:      *repo,
-		Version:   *ver,
-		CheckOnly: *check,
-		Stdout:    stdout,
-		Stderr:    stderr,
-	})
-	if err != nil {
-		fmt.Fprintln(stderr, "update:", err)
-		return 1
-	}
-	return 0
+	return distkit.Main(updateConfig(args, stdout, stderr))
 }
 
 // cmdPasswd changes the configured single-user password. It rewrites

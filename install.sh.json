@@ -1,0 +1,13 @@
+{
+  "repo": "kfet/harb",
+  "binary": "harb",
+  "asset_stem": "harb",
+  "asset_template": "{stem}-{version_no_v}-{os}-{arch}.tar.gz",
+  "arm_suffix": "armv6",
+  "brew_formula": "kfet/tap/harb",
+  "version_flag": "version",
+  "next_steps": [
+    "harb init    # bootstrap config + password",
+    "harb serve   # start the server"
+  ]
+}

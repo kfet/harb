@@ -43,7 +43,7 @@ is an ephemeral `harb serve` you start by hand on `:8099` and tear down.
 
    ```bash
    gh release view vX.Y.Z --json tagName,assets -q '{tag:.tagName,assets:[.assets[].name]}'
-   ssh sea-racknerd '~/.local/bin/harb update -check'   # current vs latest
+   ssh sea-racknerd '~/.local/bin/harb update -check'   # current vs latest (exit 3 = update available)
    ```
 
 2. **Back up the current binary, then selfupdate the on-disk binary.**

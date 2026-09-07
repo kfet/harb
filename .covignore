@@ -17,13 +17,6 @@ github.com/kfet/harb/scripts/lintfrontend/main.go
 # packages it drives; the suite itself is test-support code.
 ^github.com/kfet/harb/internal/reedercompat/
 
-# Self-update: deep filesystem I/O error branches (chmod after create,
-# rename atop running exe, io.Copy mid-stream, tar.Next post-header).
-# Happy path + all classified errors (network, checksum, missing entry,
-# bad gzip, managed paths) are covered; contriving the remaining
-# kernel-level errors adds noise without informing the behaviour.
-github.com/kfet/harb/internal/selfupdate/selfupdate.go
-
 # Store Open folds logs immediately after migrateStateLog has opened/scanned
 # the same files; these error returns are only reachable by a filesystem race
 # between migration and folding. The direct foldLog error path is exercised.
