@@ -10,8 +10,8 @@ github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnr
 github.com/json-iterator/go v1.1.12/go.mod h1:e30LSqwooZae/UwlEbR2852Gd8hjQvJoHmT4TnhNGBo=
 github.com/kfet/covgate v0.1.2 h1:29q7vN+GJ8cJeXdDwohaqAT02cCZA4HlEkzjVq0MuAA=
 github.com/kfet/covgate v0.1.2/go.mod h1:M1BHQum2HvbavZoKfnIm8qBUjPDsOb0QLFtkF0OLzlM=
-github.com/kfet/distkit v0.1.2 h1:hrpMamspp5EU/ayNwkeP9PwKwdnAJbV07Uq8f04OM0c=
-github.com/kfet/distkit v0.1.2/go.mod h1:If052OZSCfi8X0bwThHutUPM5hBbN/WuD8e+zZPXsw8=
+github.com/kfet/distkit v0.1.4 h1:DQgsIYNEvWzkUTg9P6rDVTt/RuGrNn0TyBVEY0yUIkQ=
+github.com/kfet/distkit v0.1.4/go.mod h1:If052OZSCfi8X0bwThHutUPM5hBbN/WuD8e+zZPXsw8=
 github.com/kfet/pinopass v0.1.0 h1:P0/AFxz6XS3HFLSJK3Gqo7JAwtG7fr0ZPfiFd/NQbXA=
 github.com/kfet/pinopass v0.1.0/go.mod h1:ezQFR/qZyySHqEOkLdVJSA8ZqEdWV9il+kVuGJLSSCU=
 github.com/mmcdole/gofeed v1.3.0 h1:5yn+HeqlcvjMeAI4gu6T+crm7d0anY85+M+v6fIFNG4=

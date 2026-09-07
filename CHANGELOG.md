@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`install.sh` no longer spends GitHub API quota when run anonymously.**
+  It resolves `latest` from the `releases/latest` redirect, as the old
+  hand-written script did, instead of the REST API — whose unauthenticated
+  limit is 60 requests/hour *per IP address*, so a NAT'd fleet or a CI
+  runner could arrive with it already spent and see `curl … | sh` fail with
+  a bare 403. The API is still used with `GITHUB_TOKEN` (private repos) and
+  as the fallback when the redirect yields no tag. Fixed upstream in
+  distkit v0.1.4.
+
 ## [0.21.0] - 2026-09-07
 
 ### Changed
