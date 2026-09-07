@@ -116,6 +116,17 @@ func (f *fakeRelease) requested(name string) bool {
 	return false
 }
 
+// aim points a Config at this fake release and forbids authentication. Both
+// halves matter: since distkit v0.1.5 the anonymous path skips the REST API
+// entirely and fetches from DownloadBase, so setting APIBase alone leaves the
+// download going to the real github.com — and Anonymous pins which path is
+// taken, so an ambient GITHUB_TOKEN cannot steer the test onto the API and
+// mask that. Without this these tests downloaded and installed the actual
+// published harb release on any token-less machine, i.e. CI.
+func (f *fakeRelease) aim(cfg *distkit.Config) {
+	cfg.APIBase, cfg.DownloadBase, cfg.Anonymous = f.URL, f.URL, true
+}
+
 func newFakeRelease(t *testing.T, tag string, assets map[string][]byte) *fakeRelease {
 	t.Helper()
 	f := &fakeRelease{tag: tag, assets: assets}
@@ -126,6 +137,12 @@ func newFakeRelease(t *testing.T, tag string, assets map[string][]byte) *fakeRel
 		f.seen = append(f.seen, r.URL.Path)
 		f.mu.Unlock()
 		name := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+		// The anonymous path resolves `latest` from this redirect rather
+		// than the API, exactly as the download host does.
+		if strings.HasSuffix(r.URL.Path, "/releases/latest") {
+			http.Redirect(w, r, strings.TrimSuffix(r.URL.Path, "latest")+"tag/"+f.tag, http.StatusFound)
+			return
+		}
 		if data, ok := f.assets[name]; ok {
 			_, _ = w.Write(data)
 			return
@@ -209,7 +226,7 @@ func TestUpdateReplacesBinaryFromTarball(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 	cfg := updateConfig([]string{}, &out, &errOut)
-	cfg.APIBase = srv.URL
+	srv.aim(&cfg)
 	cfg.Version = "v0.1.0"
 	cfg.ExecPath = func() (string, error) { return exe, nil }
 	cfg.DisableBrew = true
@@ -254,7 +271,8 @@ func TestUpdateRejectsCorruptedAsset(t *testing.T) {
 	}
 	var out, errOut bytes.Buffer
 	cfg := updateConfig([]string{}, &out, &errOut)
-	cfg.APIBase, cfg.Version, cfg.DisableBrew = srv.URL, "v0.1.0", true
+	srv.aim(&cfg)
+	cfg.Version, cfg.DisableBrew = "v0.1.0", true
 	cfg.ExecPath = func() (string, error) { return exe, nil }
 
 	if code := distkit.Main(cfg); code != 1 {
@@ -287,7 +305,8 @@ func TestUpdateCheckOnly(t *testing.T) {
 	run := func(version string, args ...string) (int, string) {
 		var out, errOut bytes.Buffer
 		cfg := updateConfig(args, &out, &errOut)
-		cfg.APIBase, cfg.Version, cfg.DisableBrew = srv.URL, version, true
+		srv.aim(&cfg)
+		cfg.Version, cfg.DisableBrew = version, true
 		cfg.ExecPath = func() (string, error) { return exe, nil }
 		return distkit.Main(cfg), out.String() + errOut.String()
 	}
@@ -339,7 +358,10 @@ func TestUpdateRefusesManagedInstall(t *testing.T) {
 	var out, errOut bytes.Buffer
 	cfg := updateConfig([]string{}, &out, &errOut)
 	cfg.Version, cfg.DisableBrew = "v0.1.0", true
-	cfg.APIBase = "http://127.0.0.1:1" // must never be dialled
+	// Neither the API nor the download host may be dialled: the refusal
+	// happens before any network work.
+	cfg.APIBase, cfg.DownloadBase = "http://127.0.0.1:1", "http://127.0.0.1:1"
+	cfg.Anonymous = true
 	cfg.ExecPath = func() (string, error) { return "/usr/bin/harb", nil }
 
 	if code := distkit.Main(cfg); code != 1 {
@@ -509,7 +531,8 @@ func TestUpdateInstallsPinnedVersion(t *testing.T) {
 		}
 		var out, errOut bytes.Buffer
 		cfg := updateConfig([]string{"-version", spelling}, &out, &errOut)
-		cfg.APIBase, cfg.Version, cfg.DisableBrew = srv.URL, "v0.1.0", true
+		srv.aim(&cfg)
+		cfg.Version, cfg.DisableBrew = "v0.1.0", true
 		cfg.ExecPath = func() (string, error) { return exe, nil }
 		if code := distkit.Main(cfg); code != 0 {
 			t.Fatalf("-version %s exited %d\n%s%s", spelling, code, out.String(), errOut.String())
@@ -539,7 +562,8 @@ func TestUpdateRejectsUnlistedAsset(t *testing.T) {
 	}
 	var out, errOut bytes.Buffer
 	cfg := updateConfig([]string{}, &out, &errOut)
-	cfg.APIBase, cfg.Version, cfg.DisableBrew = srv.URL, "v0.1.0", true
+	srv.aim(&cfg)
+	cfg.Version, cfg.DisableBrew = "v0.1.0", true
 	cfg.ExecPath = func() (string, error) { return exe, nil }
 
 	if code := distkit.Main(cfg); code != 1 {
