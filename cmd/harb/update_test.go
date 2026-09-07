@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/kfet/distkit"
@@ -315,6 +316,18 @@ func TestUpdateCheckOnly(t *testing.T) {
 	if code, _ := run("v0.1.0", "-nope"); code != 2 {
 		t.Errorf("bad flag exited %d, want 2", code)
 	}
+	// -version is pasted into a release URL path, so a traversing value would
+	// fetch another repo's asset *and* its self-agreeing checksums.txt. It
+	// must be refused, not resolved.
+	for _, bad := range []string{"../../kfet/other/releases/download/v1", "release/v1"} {
+		code, out := run("v0.1.0", "-version", bad)
+		if code != 1 || !strings.Contains(out, "bad version") {
+			t.Errorf("-version %q exited %d, want 1 with a 'bad version' message\n%s", bad, code, out)
+		}
+	}
+	if got, _ := os.ReadFile(exe); string(got) != "old binary\n" {
+		t.Errorf("a refused run must not touch the binary: %q", got)
+	}
 }
 
 // TestUpdateRefusesManagedInstall: a binary under a package-manager prefix
@@ -435,6 +448,47 @@ func TestInstallShMapsArmSpellings(t *testing.T) {
 	}
 	if !strings.Contains(s, "armv6") {
 		t.Error("install.sh does not name the armv6 asset")
+	}
+}
+
+// TestInstallShRejectsTraversingVersion: VERSION is pasted into two URL paths,
+// so a value carrying a slash used to walk out of this repo entirely —
+// `../../other/repo/releases/download/v1` installs another project's binary,
+// and since checksums.txt is fetched from that same traversed location it
+// verifies against itself and prints "checksum ok". The guard must refuse the
+// value up front, before any request leaves the machine, hence the hit count.
+func TestInstallShRejectsTraversingVersion(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	for _, bad := range []string{
+		"../../other/repo/releases/download/v1",
+		"v1.0.0/../../../etc",
+		"release/v1",
+		"v1 v2",
+		"-oops",
+	} {
+		t.Run(bad, func(t *testing.T) {
+			cmd := exec.Command("sh", "../../install.sh")
+			cmd.Env = append(os.Environ(),
+				"GITHUB_API="+srv.URL, "GITHUB_HOST="+srv.URL,
+				"OS=linux", "ARCH=amd64", "GITHUB_TOKEN=",
+				"BIN_DIR="+t.TempDir(), "PREFIX=", "VERSION="+bad)
+			out, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatalf("install.sh accepted VERSION=%q:\n%s", bad, out)
+			}
+			if !strings.Contains(string(out), "bad VERSION") {
+				t.Errorf("VERSION=%q rejected without saying why:\n%s", bad, out)
+			}
+		})
+	}
+	if n := hits.Load(); n != 0 {
+		t.Errorf("install.sh made %d request(s) before rejecting a bad VERSION", n)
 	}
 }
 

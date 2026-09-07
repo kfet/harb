@@ -4,6 +4,41 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- **`install.sh` now rejects a malformed `VERSION` before it downloads
+  anything.** The release tag was pasted unvalidated into two URL paths, so
+  `VERSION=../../other/repo/releases/download/v1` walked out of this repo
+  and installed a *different project's* binary — and since `checksums.txt`
+  came from that same traversed location, it verified against itself and
+  printed "checksum ok". `VERSION` must now be `latest` or a plain release
+  tag (`[A-Za-z0-9._+-]`, not leading `-`); anything else dies up front with
+  `bad VERSION`. Latest-resolution also captures the whole tag after
+  `/releases/tag/` rather than the last path segment, so a tag containing a
+  slash stays whole and is rejected instead of being truncated into the name
+  of some other existing tag. `harb update -version` is guarded the same way.
+  Fixed upstream in distkit v0.1.6.
+
+### Fixed
+
+- **`harb update` no longer spends GitHub API quota when run anonymously.**
+  v0.21.1 fixed only the `install.sh` half; the Go path still hit the REST
+  API, so on a NAT'd network sharing the 60-requests/hour-per-IP anonymous
+  limit it failed with a 403 that reads like a permissions error on a public
+  repo. A pinned tag now needs no lookup, `latest` comes from the
+  `releases/latest` redirect, and assets are fetched from
+  `/releases/download/<tag>/`. Checksums are still verified and the
+  `GITHUB_TOKEN` private-repo path is unchanged. Fixed upstream in distkit
+  v0.1.5.
+
+- **`harb update` on a developer's own build is refused again.** The
+  dev-build guard matched only bare placeholders (`dev`, `(devel)`) and
+  missed the `<tag>-dev` form this repo actually compiles a working tree as,
+  so `update` would rename a release binary over it — exactly what the guard
+  exists to prevent. Prerelease tags (`-rc1`, `-beta.2`) are real releases
+  and still update. Fixed upstream in distkit v0.1.7.
+
+
 ## [0.21.1] - 2026-09-07
 
 ### Fixed

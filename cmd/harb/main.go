@@ -553,10 +553,12 @@ func updateConfig(args []string, stdout, stderr io.Writer) distkit.Config {
 }
 
 // cmdUpdate is `harb update`, implemented entirely by distkit: resolve
-// the release through the GitHub API, verify sha256 against
-// checksums.txt, unpack the tarball, and atomically swap the running
-// binary. A Homebrew install is upgraded through brew rather than
-// self-updated; an install harb does not own is refused up front.
+// the release (anonymously that costs no API quota — a pinned tag needs
+// no lookup and `latest` comes from the releases/latest redirect; the
+// API is used only with a token, i.e. for a private repo), verify
+// sha256 against checksums.txt, unpack the tarball, and atomically swap
+// the running binary. A Homebrew install is upgraded through brew rather
+// than self-updated; an install harb does not own is refused up front.
 //
 // Exit codes: 0 success or already up to date, 1 failed/refused,
 // 2 bad flags, 3 a `-check` run that found a different release.
