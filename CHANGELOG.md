@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-09-07
+
 ### Fixed
 
 - **`install.sh` no longer spends GitHub API quota when run anonymously.**
