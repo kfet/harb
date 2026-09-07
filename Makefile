@@ -3,6 +3,7 @@
 # Coverage gate. Pinned as a `tool` directive in go.mod (`go get -tool`), so the
 # version is tracked there rather than inline here.
 COVGATE := go tool covgate
+INSTALLSH := go tool distkit-installsh
 
 
 # Version metadata baked into the binary at link time. Override on the
@@ -117,14 +118,15 @@ run-tests:
 
 # install.sh is GENERATED from install.sh.json by the shared distkit
 # template — the same spec the binary self-updates with, so asset naming
-# has one definition. Regenerate after editing install.sh.json.
-install.sh: install.sh.json
-	$(call RUN,generate install.sh,go run github.com/kfet/distkit/cmd/distkit-installsh -o $@)
+# has one definition. go.mod is a prerequisite because bumping distkit
+# can change the template, not just the spec.
+install.sh: install.sh.json go.mod
+	$(call RUN,generate install.sh,$(INSTALLSH) -o $@)
 
 # Dev-only drift gate: fails when the checked-in install.sh no longer
 # matches what the template would produce. Never runs on a user machine.
 check-installsh:
-	$(call RUN,install.sh not drifted,go run github.com/kfet/distkit/cmd/distkit-installsh -check)
+	$(call RUN,install.sh not drifted,$(INSTALLSH) -check)
 
 open_coverage:
 	go tool cover -html=coverage.out

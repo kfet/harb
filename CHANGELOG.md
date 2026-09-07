@@ -31,6 +31,9 @@ All notable changes to this project will be documented in this file.
   - `harb update -restart-cmd '<sh>'` recycles the service after a
     successful swap, and a recycle hint is printed otherwise.
 
+  `install.sh` and the `distkit-installsh` generator are pinned through
+  go.mod's `tool` directive, so the drift check needs no network.
+
   Asset naming (`harb-<version>-<os>-<arch>.tar.gz`, 32-bit ARM as
   `armv6`) is unchanged and now has a single definition shared by the
   binary and `install.sh` (`install.sh.json`). `install.sh` is
