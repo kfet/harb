@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-09-07
+
 ### Changed
 
 - **`harb update -check` now exits 3 when an update is available** (0 = up
